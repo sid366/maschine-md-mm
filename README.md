@@ -46,7 +46,8 @@ Suspects. Please report fork-specific issues here, not to the upstream projects.
 MK3 integration as the combined app, but each emulates only one machine. Use
 them on computers that cannot run both emulations at once. The other
 instrument's display shows that instrument's name. They use the same
-firmware, storage and settings folders as the combined app.
+firmware folders as the combined app, but each keeps its own saved session
+(patterns and kits); move work between apps with a SysEx dump.
 
 Build them with the targets `mdSoloJucePlugin_Standalone` and
 `mmSoloJucePlugin_Standalone`.
