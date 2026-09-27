@@ -45,6 +45,8 @@ namespace mdJucePlugin::maschine
 			bool _playing, bool _mixerHeld = false, int _selectedScalePage = -1,
 			uint8_t _scalePulseMask = 0, bool _recordActive = false,
 			int _enabledScalePages = -1, uint16_t _drumHitMask = 0);
+		// Placeholder for the display of a machine that the product omits.
+		static void renderIdle(Frame& _frame, md::MachineModel _activeModel);
 		static DirtyRect dirtyBounds(const Frame& _before, const Frame& _after);
 
 		static uint16_t lcdOnColor(md::MachineModel _model);

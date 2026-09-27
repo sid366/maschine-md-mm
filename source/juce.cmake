@@ -147,7 +147,7 @@ macro(createJucePlugin targetName productName isSynth plugin4CC binaryDataProjec
 	# The combined app has a new public name but retains its permission identity.
 	set(productBundleIdentifier "local.gearmulator.preview.${productNameIdentifier}")
 	set(productWebsite "https://dsp56300.wordpress.com")
-	if("${targetName}" MATCHES "^(md|mm|mdmm)JucePlugin$")
+	if("${targetName}" MATCHES "^(md|mm|mdmm|mdSolo|mmSolo)JucePlugin$")
 		set(productWebsite "https://github.com/mo0kid/maschine-md-mm")
 	endif()
 	if("${targetName}" STREQUAL "mdmmJucePlugin")

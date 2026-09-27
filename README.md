@@ -40,6 +40,17 @@ Suspects. Please report fork-specific issues here, not to the upstream projects.
   functions. Additional output pairs are available in a multi-output VST3 host;
   the standalone apps use stereo output.
 
+## Single-machine apps (Maschine MD / Maschine MM)
+
+**Maschine MD** and **Maschine MM** are standalone apps with the same Maschine
+MK3 integration as the combined app, but each emulates only one machine. Use
+them on computers that cannot run both emulations at once. The other
+instrument's display shows that instrument's name. They use the same
+firmware, storage and settings folders as the combined app.
+
+Build them with the targets `mdSoloJucePlugin_Standalone` and
+`mmSoloJucePlugin_Standalone`.
+
 ## Using a Maschine MK3
 
 Connect the MK3 and open the **Maschine MD-MM** standalone app on macOS. The

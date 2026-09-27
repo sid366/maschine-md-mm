@@ -120,6 +120,16 @@ namespace mdJucePlugin::maschine
 		}
 	}
 
+	void ScreenRenderer::renderIdle(Frame& _frame, const md::MachineModel _activeModel)
+	{
+		_frame.fill(g_background);
+		const std::string label = longName(_activeModel);
+		constexpr unsigned scale = 3;
+		const auto width = static_cast<unsigned>(label.size()) * 4 * scale;
+		drawText(_frame, (g_width - width) / 2, (g_height - 5 * scale) / 2,
+			label.c_str(), accent(_activeModel), scale);
+	}
+
 	ScreenRenderer::Frame ScreenRenderer::render(const md::FrontPanel& _panel,
 		const md::MachineModel _displayedModel,
 		const md::MachineModel _controlledModel, const bool _playing,

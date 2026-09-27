@@ -7,6 +7,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include <atomic>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <thread>
@@ -17,13 +18,21 @@ namespace mdJucePlugin
 	class CombinedProcessor final : public juce::AudioProcessor
 	{
 	public:
-		CombinedProcessor();
+		// With a solo model only that instrument is created, so a single-machine
+		// product keeps the Maschine integration without emulating the other one.
+		explicit CombinedProcessor(std::optional<md::MachineModel> _soloModel = std::nullopt);
 		~CombinedProcessor() override;
 
 		void setFocusedModel(md::MachineModel _model) { m_maschine.setFocusedModel(_model); }
 
-		AudioPluginAudioProcessor& machinedrum() { return m_machinedrum; }
-		AudioPluginAudioProcessor& monomachine() { return m_monomachine; }
+		// Null when that instrument is not part of this product.
+		AudioPluginAudioProcessor* machinedrum() { return m_machinedrum.get(); }
+		AudioPluginAudioProcessor* monomachine() { return m_monomachine.get(); }
+		AudioPluginAudioProcessor* processorFor(md::MachineModel _model)
+		{
+			return _model == md::MachineModel::Monomachine ? monomachine() : machinedrum();
+		}
+		std::optional<md::MachineModel> soloModel() const { return m_soloModel; }
 
 		struct SysexCapture
 		{
@@ -43,7 +52,7 @@ namespace mdJucePlugin
 
 		juce::AudioProcessorEditor* createEditor() override;
 		bool hasEditor() const override { return true; }
-		const juce::String getName() const override { return "Maschine MD-MM"; }
+		const juce::String getName() const override { return PluginName; }
 		bool acceptsMidi() const override { return true; }
 		bool producesMidi() const override { return true; }
 		bool isMidiEffect() const override { return false; }
@@ -58,14 +67,17 @@ namespace mdJucePlugin
 		void setStateInformation(const void* _data, int _size) override;
 
 	private:
+		void processSolo(juce::AudioBuffer<float>& _audio, juce::MidiBuffer& _midi,
+			int _samples);
 		void runMonomachineWorker();
 		void captureSysex(const juce::MidiBuffer& _midi, md::MachineModel _model);
 		void runFastBoot(AudioPluginAudioProcessor& _processor,
 			std::atomic<bool>& _active);
 		void stopFastBootWorkers();
 
-		AudioPluginAudioProcessor m_machinedrum;
-		AudioPluginAudioProcessor m_monomachine;
+		const std::optional<md::MachineModel> m_soloModel;
+		std::unique_ptr<AudioPluginAudioProcessor> m_machinedrum;
+		std::unique_ptr<AudioPluginAudioProcessor> m_monomachine;
 		maschine::Controller m_maschine;
 		juce::AudioBuffer<float> m_mdAudio;
 		juce::AudioBuffer<float> m_mmAudio;

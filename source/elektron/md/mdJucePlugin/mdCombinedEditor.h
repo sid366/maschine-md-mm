@@ -23,6 +23,7 @@ namespace mdJucePlugin
 	private:
 		struct SysexMenu;
 		friend struct SysexMenu;
+		bool hasMachine(bool _monomachine) const;
 		Editor* editorFor(bool _monomachine) const;
 		void confirmFactoryReset(bool _monomachine);
 		void startSysexSave(bool _monomachine);

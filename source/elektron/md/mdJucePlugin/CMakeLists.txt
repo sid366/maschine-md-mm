@@ -93,9 +93,26 @@ target_compile_definitions(mdmmJucePlugin PRIVATE
 	MD_JUCEPLUGIN_COMBINED=1
 	JUCE_STANDALONE_PLUGIN_DEFAULT_BUFFER_SIZE=512)
 
+# Single-machine variants of the combined app: the same Maschine MK3
+# integration, but only one emulation runs, for lower CPU and memory use.
+# They share firmware, storage and settings folders with the other products.
+createJucePlugin(mdSoloJucePlugin "Maschine MD" TRUE "Tmds" mdJucePlugin_BinaryData mdLib)
+createJucePlugin(mmSoloJucePlugin "Maschine MM" TRUE "Tmms" mmJucePlugin_BinaryData mdLib)
+target_compile_definitions(mdSoloJucePlugin PRIVATE
+	MD_JUCEPLUGIN_COMBINED=1
+	MD_JUCEPLUGIN_SOLO_MACHINEDRUM=1
+	JUCE_STANDALONE_PLUGIN_DEFAULT_BUFFER_SIZE=512)
+target_compile_definitions(mmSoloJucePlugin PRIVATE
+	MD_JUCEPLUGIN_COMBINED=1
+	MD_JUCEPLUGIN_SOLO_MONOMACHINE=1
+	MD_JUCEPLUGIN_MONOMACHINE=1
+	JUCE_STANDALONE_PLUGIN_DEFAULT_BUFFER_SIZE=512)
+set(MD_PLUGIN_TARGETS mdJucePlugin mmJucePlugin mdmmJucePlugin
+	mdSoloJucePlugin mmSoloJucePlugin)
+
 if(APPLE)
 	find_library(MD_COREFOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
-	foreach(plugin_target mdJucePlugin mmJucePlugin mdmmJucePlugin)
+	foreach(plugin_target ${MD_PLUGIN_TARGETS})
 		target_link_libraries(${plugin_target} PRIVATE ${MD_COREFOUNDATION_FRAMEWORK})
 	endforeach()
 endif()
@@ -105,7 +122,7 @@ endif()
 # and output devices on common Mac setups, which can consume the real-time
 # deadline. Keep the input selectable, but start new standalone configurations
 # with output only.
-foreach(plugin_target mdJucePlugin mmJucePlugin mdmmJucePlugin)
+foreach(plugin_target ${MD_PLUGIN_TARGETS})
 	target_compile_definitions(${plugin_target} PUBLIC
 		JUCE_STANDALONE_PLUGIN_AUTO_OPEN_AUDIO_INPUT=0
 		JUCE_VST3_EMULATE_MIDI_PC_WITH_PROGRAMS=1)
@@ -148,7 +165,10 @@ if(APPLE)
 		mdJucePlugin_AU mmJucePlugin_AU
 		mdmmJucePlugin_AU
 		mdJucePlugin_Standalone mmJucePlugin_Standalone
-		mdmmJucePlugin_Standalone)
+		mdmmJucePlugin_Standalone
+		mdSoloJucePlugin_VST3 mmSoloJucePlugin_VST3
+		mdSoloJucePlugin_AU mmSoloJucePlugin_AU
+		mdSoloJucePlugin_Standalone mmSoloJucePlugin_Standalone)
 		if(TARGET ${plugin_target})
 			if(_gearmulator_codesign_identity STREQUAL "-")
 				add_custom_command(TARGET ${plugin_target} POST_BUILD

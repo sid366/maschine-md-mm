@@ -37,6 +37,8 @@ namespace mdJucePlugin
 			const auto addMachine = [&](const bool mm, const int send,
 				const int resume, const int cancel)
 			{
+				if(!owner.hasMachine(mm))
+					return;
 				const auto* editor = owner.editorFor(mm);
 				const juce::String name = mm ? "Monomachine" : "Machinedrum";
 				const bool active = editor && editor->isUserSysexTransferActive();
@@ -57,15 +59,19 @@ namespace mdJucePlugin
 			}
 			else
 			{
-				menu.addItem(SaveMd, "Save Machinedrum SysEx Dump...",
-					!sending && !owner.m_sysexSaveChooserOpen);
-				menu.addItem(SaveMm, "Save Monomachine SysEx Dump...",
-					!sending && !owner.m_sysexSaveChooserOpen);
+				if(owner.hasMachine(false))
+					menu.addItem(SaveMd, "Save Machinedrum SysEx Dump...",
+						!sending && !owner.m_sysexSaveChooserOpen);
+				if(owner.hasMachine(true))
+					menu.addItem(SaveMm, "Save Monomachine SysEx Dump...",
+						!sending && !owner.m_sysexSaveChooserOpen);
 			}
 			menu.addSeparator();
 			juce::PopupMenu reset;
-			reset.addItem(ResetMd, "Machinedrum...");
-			reset.addItem(ResetMm, "Monomachine...");
+			if(owner.hasMachine(false))
+				reset.addItem(ResetMd, "Machinedrum...");
+			if(owner.hasMachine(true))
+				reset.addItem(ResetMm, "Monomachine...");
 			menu.addSubMenu("Factory Reset", reset, !saving && !sending && !owner.m_factoryResetPending);
 			return menu;
 		}
@@ -103,8 +109,10 @@ namespace mdJucePlugin
 	CombinedEditor::CombinedEditor(CombinedProcessor& _processor)
 		: AudioProcessorEditor(&_processor)
 		, m_processor(_processor)
-		, m_mdEditor(_processor.machinedrum().createEditorIfNeeded())
-		, m_mmEditor(_processor.monomachine().createEditorIfNeeded())
+		, m_mdEditor(_processor.machinedrum()
+			? _processor.machinedrum()->createEditorIfNeeded() : nullptr)
+		, m_mmEditor(_processor.monomachine()
+			? _processor.monomachine()->createEditorIfNeeded() : nullptr)
 	{
 		for(auto* editor : {m_mdEditor.get(), m_mmEditor.get()})
 		{
@@ -121,12 +129,13 @@ namespace mdJucePlugin
 		const auto mmWidth = m_mmEditor ? m_mmEditor->getWidth() : 1200;
 		const auto mdHeight = m_mdEditor ? m_mdEditor->getHeight() : 500;
 		const auto mmHeight = m_mmEditor ? m_mmEditor->getHeight() : 500;
-		m_mdNaturalWidth = std::max(1, mdWidth);
-		m_mdNaturalHeight = std::max(1, mdHeight);
-		m_mmNaturalWidth = std::max(1, mmWidth);
-		m_mmNaturalHeight = std::max(1, mmHeight);
-		m_naturalWidth = std::max(m_mdNaturalWidth, m_mmNaturalWidth);
-		m_naturalHeight = m_mdNaturalHeight + m_mmNaturalHeight;
+		// An omitted machine takes no space in the window.
+		m_mdNaturalWidth = hasMachine(false) ? std::max(1, mdWidth) : 0;
+		m_mdNaturalHeight = hasMachine(false) ? std::max(1, mdHeight) : 0;
+		m_mmNaturalWidth = hasMachine(true) ? std::max(1, mmWidth) : 0;
+		m_mmNaturalHeight = hasMachine(true) ? std::max(1, mmHeight) : 0;
+		m_naturalWidth = std::max(1, std::max(m_mdNaturalWidth, m_mmNaturalWidth));
+		m_naturalHeight = std::max(1, m_mdNaturalHeight + m_mmNaturalHeight);
 		m_preferredWidth = m_naturalWidth;
 		m_preferredHeight = m_naturalHeight;
 		if(const auto* display = juce::Desktop::getInstance().getDisplays()
@@ -177,17 +186,26 @@ namespace mdJucePlugin
 		setConstrainer(nullptr);
 	}
 
+	bool CombinedEditor::hasMachine(const bool _monomachine) const
+	{
+		return (_monomachine ? m_processor.monomachine()
+			: m_processor.machinedrum()) != nullptr;
+	}
+
 	Editor* CombinedEditor::editorFor(const bool _monomachine) const
 	{
-		auto& processor = _monomachine ? m_processor.monomachine()
+		auto* const processor = _monomachine ? m_processor.monomachine()
 			: m_processor.machinedrum();
-		auto* const state = processor.getEditorState();
+		if(!processor)
+			return nullptr;
+		auto* const state = processor->getEditorState();
 		return state ? dynamic_cast<Editor*>(state->getEditor()) : nullptr;
 	}
 
 	void CombinedEditor::confirmFactoryReset(const bool _monomachine)
 	{
-		if(m_factoryResetPending || m_processor.isSysexCapturing() || m_sysexSaveChooserOpen
+		if(!hasMachine(_monomachine)
+			|| m_factoryResetPending || m_processor.isSysexCapturing() || m_sysexSaveChooserOpen
 			|| (editorFor(false) && editorFor(false)->isUserSysexTransferActive())
 			|| (editorFor(true) && editorFor(true)->isUserSysexTransferActive())) return;
 		m_factoryResetPending = true;
@@ -202,9 +220,9 @@ namespace mdJucePlugin
 				if(!safe) return;
 				safe->m_factoryResetPending = false;
 				if(result != 1) return;
-				auto& processor = _monomachine ? safe->m_processor.monomachine() : safe->m_processor.machinedrum();
+				auto* const processor = _monomachine ? safe->m_processor.monomachine() : safe->m_processor.machinedrum();
 				juce::String error;
-				if(!processor.factoryReset(error))
+				if(processor && !processor->factoryReset(error))
 					juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon,
 						"Factory Reset failed", error, "OK", safe.getComponent());
 			}));
@@ -212,7 +230,8 @@ namespace mdJucePlugin
 
 	void CombinedEditor::startSysexSave(const bool _monomachine)
 	{
-		if(m_processor.isSysexCapturing() || m_sysexSaveChooserOpen
+		if(!hasMachine(_monomachine)
+			|| m_processor.isSysexCapturing() || m_sysexSaveChooserOpen
 			|| (editorFor(false) && editorFor(false)->isUserSysexTransferActive())
 			|| (editorFor(true) && editorFor(true)->isUserSysexTransferActive()))
 			return;
@@ -302,14 +321,14 @@ namespace mdJucePlugin
 		const auto scale = std::min(
 			static_cast<double>(getWidth()) / m_naturalWidth,
 			static_cast<double>(getHeight()) / m_naturalHeight);
-		const auto mdWidth = std::max(1,
-			static_cast<int>(m_mdNaturalWidth * scale));
-		const auto mdHeight = std::max(1,
-			static_cast<int>(m_mdNaturalHeight * scale));
-		const auto mmWidth = std::max(1,
-			static_cast<int>(m_mmNaturalWidth * scale));
-		const auto mmHeight = std::max(1,
-			static_cast<int>(m_mmNaturalHeight * scale));
+		const auto mdWidth = m_mdEditor ? std::max(1,
+			static_cast<int>(m_mdNaturalWidth * scale)) : 0;
+		const auto mdHeight = m_mdEditor ? std::max(1,
+			static_cast<int>(m_mdNaturalHeight * scale)) : 0;
+		const auto mmWidth = m_mmEditor ? std::max(1,
+			static_cast<int>(m_mmNaturalWidth * scale)) : 0;
+		const auto mmHeight = m_mmEditor ? std::max(1,
+			static_cast<int>(m_mmNaturalHeight * scale)) : 0;
 		const auto contentHeight = mdHeight + mmHeight;
 		const auto top = (getHeight() - contentHeight) / 2;
 		if(m_mdEditor)

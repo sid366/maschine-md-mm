@@ -18,8 +18,10 @@ namespace mdJucePlugin::maschine
 	class Controller
 	{
 	public:
-		Controller(AudioPluginAudioProcessor& _machinedrum,
-			AudioPluginAudioProcessor& _monomachine);
+		// Either machine may be null in a single-machine app; focus then stays
+		// on the machine that is present.
+		Controller(AudioPluginAudioProcessor* _machinedrum,
+			AudioPluginAudioProcessor* _monomachine);
 		~Controller();
 
 		Controller(const Controller&) = delete;
@@ -32,6 +34,7 @@ namespace mdJucePlugin::maschine
 	private:
 		enum class Lightshow : uint8_t { Random, Rainbow, Chase, Pulse, Count };
 		void run();
+		bool hasModel(md::MachineModel _model) const;
 		void handleButton(const nihia::ButtonEvent& _event);
 		void handleKnob(const nihia::KnobEvent& _event);
 		void handleMainKnob(const nihia::MainKnobEvent& _event);
@@ -57,8 +60,8 @@ namespace mdJucePlugin::maschine
 		md::PanelRowState& rowsFor(md::MachineModel _model);
 		AudioPluginAudioProcessor& focusedProcessor();
 
-		AudioPluginAudioProcessor& m_machinedrum;
-		AudioPluginAudioProcessor& m_monomachine;
+		AudioPluginAudioProcessor* const m_machinedrum;
+		AudioPluginAudioProcessor* const m_monomachine;
 		NihiaClient m_client;
 		std::atomic<md::MachineModel> m_focused{md::MachineModel::Machinedrum};
 		std::atomic<uint8_t> m_mmSelectedTrack{0};
@@ -96,6 +99,9 @@ namespace mdJucePlugin::maschine
 		int8_t m_knob5Direction = 0;
 		uint8_t m_knob5DirectionRun = 0;
 		uint64_t m_knob5LastEventMs = 0;
+		int8_t m_mainKnobDirection = 0;
+		uint8_t m_mainKnobDirectionRun = 0;
+		uint64_t m_mainKnobLastEventMs = 0;
 		bool m_shiftHeld = false;
 		bool m_shiftFunctionForwarded = false;
 		std::chrono::steady_clock::time_point m_recordPressedAt{};

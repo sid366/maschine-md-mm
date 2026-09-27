@@ -107,11 +107,13 @@ namespace mdJucePlugin::maschine
 
 	}
 
-	Controller::Controller(AudioPluginAudioProcessor& _machinedrum,
-		AudioPluginAudioProcessor& _monomachine)
+	Controller::Controller(AudioPluginAudioProcessor* const _machinedrum,
+		AudioPluginAudioProcessor* const _monomachine)
 		: m_machinedrum(_machinedrum)
 		, m_monomachine(_monomachine)
 	{
+		if(!m_machinedrum)
+			m_focused.store(md::MachineModel::Monomachine);
 		m_client.setButtonCallback([this](const nihia::ButtonEvent& _event)
 		{
 			handleButton(_event);
@@ -146,7 +148,9 @@ namespace mdJucePlugin::maschine
 	uint8_t Controller::selectedMonomachineTrack()
 	{
 		// MIDI must follow app track selection even without a Maschine connection.
-		if(auto publisher = m_monomachine.tryGetFrontPanelPublisher())
+		if(!m_monomachine)
+			return m_mmSelectedTrack.load();
+		if(auto publisher = m_monomachine->tryGetFrontPanelPublisher())
 		{
 			md::FrontPanel panel;
 			if(publisher->tryRead(panel))
@@ -163,23 +167,31 @@ namespace mdJucePlugin::maschine
 		return m_mmSelectedTrack.load();
 	}
 
+	bool Controller::hasModel(const md::MachineModel _model) const
+	{
+		return (_model == md::MachineModel::Monomachine
+			? m_monomachine : m_machinedrum) != nullptr;
+	}
+
 	void Controller::setFocusedModel(const md::MachineModel _model)
 	{
+		if(!hasModel(_model))
+			return;
 		m_focused.store(_model);
 		m_waitCondition.notify_all();
 	}
 
 	AudioPluginAudioProcessor& Controller::focusedProcessor()
 	{
-		return m_focused.load() == md::MachineModel::Monomachine
-			? m_monomachine : m_machinedrum;
+		return processorFor(m_focused.load());
 	}
 
+	// Callers must only address a machine that exists (see hasModel).
 	AudioPluginAudioProcessor& Controller::processorFor(
 		const md::MachineModel _model)
 	{
 		return _model == md::MachineModel::Monomachine
-			? m_monomachine : m_machinedrum;
+			? *m_monomachine : *m_machinedrum;
 	}
 
 	md::PanelRowState& Controller::rowsFor(const md::MachineModel _model)
@@ -206,6 +218,8 @@ namespace mdJucePlugin::maschine
 	void Controller::sendControl(const md::MachineModel _model,
 		const md::PanelControl _control, const bool _pressed)
 	{
+		if(!hasModel(_model))
+			return;
 		std::lock_guard lock(m_inputMutex);
 		auto& processor = processorFor(_model);
 		const auto packet = md::panelPacket(processor.getModel(), _control);
@@ -261,7 +275,7 @@ namespace mdJucePlugin::maschine
 	void Controller::sendEncoderPress(const md::MachineModel _model,
 		const uint8_t _index, const bool _pressed)
 	{
-		if(_index >= 8)
+		if(_index >= 8 || !hasModel(_model))
 			return;
 		std::lock_guard lock(m_inputMutex);
 		auto& processor = processorFor(_model);
@@ -277,6 +291,8 @@ namespace mdJucePlugin::maschine
 	void Controller::selectTrack(const md::MachineModel _model,
 		const uint8_t _index)
 	{
+		if(!hasModel(_model))
+			return;
 		if(_model == md::MachineModel::Machinedrum)
 		{
 			if(_index >= 16)
@@ -287,7 +303,7 @@ namespace mdJucePlugin::maschine
 			event.sysex.push_back(0xf0);
 			event.sysex.insert(event.sysex.end(), body.begin(), body.end());
 			event.sysex.push_back(0xf7);
-			m_machinedrum.addMidiEvent(event);
+			m_machinedrum->addMidiEvent(event);
 			return;
 		}
 
@@ -306,7 +322,7 @@ namespace mdJucePlugin::maschine
 		const auto trackCount = _model == md::MachineModel::Monomachine
 			? md::automation::monomachine::TrackCount
 			: md::automation::machinedrum::TrackCount;
-		if(_index >= trackCount)
+		if(_index >= trackCount || !hasModel(_model))
 			return;
 		if(_model == md::MachineModel::Monomachine)
 		{
@@ -352,6 +368,8 @@ namespace mdJucePlugin::maschine
 	bool Controller::isTrackMuted(const md::MachineModel _model,
 		const uint8_t _index)
 	{
+		if(!hasModel(_model))
+			return false;
 		const auto mutePage = _model == md::MachineModel::Monomachine
 			? md::automation::monomachine::Mute
 			: md::automation::machinedrum::Mute;
@@ -813,6 +831,25 @@ namespace mdJucePlugin::maschine
 		if(_event.rotation == 0)
 			return;
 		std::lock_guard lock(m_inputMutex);
+		{
+			// Like knob 5, this encoder can report isolated turns by itself.
+			// Require two consecutive reports in the same direction.
+			const auto nowMs = static_cast<uint64_t>(
+				std::chrono::duration_cast<std::chrono::milliseconds>(
+					std::chrono::steady_clock::now().time_since_epoch()).count());
+			const auto direction = static_cast<int8_t>(_event.rotation > 0 ? 1 : -1);
+			if(nowMs - m_mainKnobLastEventMs > 120 || direction != m_mainKnobDirection)
+			{
+				m_mainKnobDirection = direction;
+				m_mainKnobDirectionRun = 1;
+			}
+			else
+				m_mainKnobDirectionRun = static_cast<uint8_t>(
+					std::min<unsigned>(m_mainKnobDirectionRun + 1, 0xff));
+			m_mainKnobLastEventMs = nowMs;
+			if(m_mainKnobDirectionRun < 2)
+				return;
+		}
 		if(m_buttonPressed[51])
 		{
 			constexpr int count = static_cast<int>(Lightshow::Count);
@@ -866,7 +903,7 @@ namespace mdJucePlugin::maschine
 				&& m_mdPatternBankHeld >= 0)
 			{
 				m_mdPatternBeforeLocalSelection =
-					m_machinedrum.getCurrentPattern();
+					m_machinedrum->getCurrentPattern();
 				m_mdSelectedPatternBank = m_mdPatternBankHeld;
 				m_mdSelectedPatternSlot = _event.index;
 				m_mdLocalPatternSelectionMs = nowMs;
@@ -876,7 +913,7 @@ namespace mdJucePlugin::maschine
 				&& m_mmPatternBankHeld >= 0)
 			{
 				m_mmPatternBeforeLocalSelection =
-					m_monomachine.getCurrentPattern();
+					m_monomachine->getCurrentPattern();
 				m_mmSelectedPatternBank = m_mmPatternBankHeld;
 				m_mmSelectedPatternSlot = _event.index;
 				m_mmLocalPatternSelectionMs = nowMs;
@@ -928,8 +965,11 @@ namespace mdJucePlugin::maschine
 		int mmPatternBankHeld = -1;
 		int mmSelectedPatternBank = -1;
 		int mmSelectedPatternSlot = -1;
-		const auto mdCurrentPattern = m_machinedrum.getCurrentPattern();
-		const auto mmCurrentPattern = m_monomachine.getCurrentPattern();
+		// 0xff is ignored below, like an unknown pattern.
+		const auto mdCurrentPattern = m_machinedrum
+			? m_machinedrum->getCurrentPattern() : uint8_t{0xff};
+		const auto mmCurrentPattern = m_monomachine
+			? m_monomachine->getCurrentPattern() : uint8_t{0xff};
 		{
 			std::lock_guard lock(m_inputMutex);
 			// The firmware pattern-status poll is intentionally lightweight (5 s).
@@ -1292,17 +1332,17 @@ namespace mdJucePlugin::maschine
 				haveLeds = false;
 			}
 
-			if(!mdPublisher)
+			if(!mdPublisher && m_machinedrum)
 			{
-				mdPublisher = m_machinedrum.tryGetFrontPanelPublisher();
+				mdPublisher = m_machinedrum->tryGetFrontPanelPublisher();
 				if(mdPublisher)
 				{
 					mdTempoActivation = mdPublisher->getLedActivationSequence(0x23, 5);
 				}
 			}
-			if(!mmPublisher)
+			if(!mmPublisher && m_monomachine)
 			{
-				mmPublisher = m_monomachine.tryGetFrontPanelPublisher();
+				mmPublisher = m_monomachine->tryGetFrontPanelPublisher();
 				if(mmPublisher)
 				{
 					mmTempoActivation = mmPublisher->getLedActivationSequence(0x26, 7);
@@ -1432,13 +1472,21 @@ namespace mdJucePlugin::maschine
 				std::lock_guard lock(m_inputMutex);
 				mixerHeld = m_mixerHeld;
 			}
-			ScreenRenderer::renderInto(*left, mdPanel,
-				md::MachineModel::Machinedrum, focused, m_mdPlaying.load(), mixerHeld,
-				mdSections.selected, mdDimPages, mdRecordActive, mdSections.enabled,
-				m_machinedrum.getDrumHitMask());
-			ScreenRenderer::renderInto(*right, mmPanel,
-				md::MachineModel::Monomachine, focused, m_mmPlaying.load(), mixerHeld,
-				mmSections.selected, mmDimPages, mmRecordActive, mmSections.enabled);
+			// A single-machine app shows the running machine's name on the
+			// other display.
+			if(m_machinedrum)
+				ScreenRenderer::renderInto(*left, mdPanel,
+					md::MachineModel::Machinedrum, focused, m_mdPlaying.load(), mixerHeld,
+					mdSections.selected, mdDimPages, mdRecordActive, mdSections.enabled,
+					m_machinedrum->getDrumHitMask());
+			else
+				ScreenRenderer::renderIdle(*left, md::MachineModel::Monomachine);
+			if(m_monomachine)
+				ScreenRenderer::renderInto(*right, mmPanel,
+					md::MachineModel::Monomachine, focused, m_mmPlaying.load(), mixerHeld,
+					mmSections.selected, mmDimPages, mmRecordActive, mmSections.enabled);
+			else
+				ScreenRenderer::renderIdle(*right, md::MachineModel::Machinedrum);
 			const auto sendLeft = [&]
 			{
 				if((!haveLeft || now - lastLeftFrame >= 60ms)

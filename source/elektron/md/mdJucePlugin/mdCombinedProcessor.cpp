@@ -23,17 +23,29 @@ namespace mdJucePlugin
 			_processor.setPlayConfigDetails(2, 2, _sampleRate, _blockSize);
 			_processor.prepareToPlay(_sampleRate, _blockSize);
 		}
+
+		std::unique_ptr<AudioPluginAudioProcessor> createMachine(
+			const md::MachineModel _model,
+			const std::optional<md::MachineModel> _soloModel)
+		{
+			if(_soloModel && *_soloModel != _model)
+				return {};
+			return std::make_unique<AudioPluginAudioProcessor>(_model, false);
+		}
 	}
 
-	CombinedProcessor::CombinedProcessor()
+	CombinedProcessor::CombinedProcessor(const std::optional<md::MachineModel> _soloModel)
 		: AudioProcessor(BusesProperties()
 			.withInput("Input A/B", juce::AudioChannelSet::stereo(), true)
 			.withOutput("Main A/B", juce::AudioChannelSet::stereo(), true))
-		, m_machinedrum(md::MachineModel::Machinedrum, false)
-		, m_monomachine(md::MachineModel::Monomachine, false)
-		, m_maschine(m_machinedrum, m_monomachine)
+		, m_soloModel(_soloModel)
+		, m_machinedrum(createMachine(md::MachineModel::Machinedrum, _soloModel))
+		, m_monomachine(createMachine(md::MachineModel::Monomachine, _soloModel))
+		, m_maschine(m_machinedrum.get(), m_monomachine.get())
 	{
-		m_mmWorker = std::thread([this] { runMonomachineWorker(); });
+		// A solo product runs its one machine on the host audio thread.
+		if(m_machinedrum && m_monomachine)
+			m_mmWorker = std::thread([this] { runMonomachineWorker(); });
 	}
 
 	CombinedProcessor::~CombinedProcessor()
@@ -51,6 +63,9 @@ namespace mdJucePlugin
 	{
 		if(isSysexCapturing())
 			return false;
+		auto* const machine = processorFor(_model);
+		if(!machine)
+			return false;
 		{
 			std::lock_guard lock(m_captureMutex);
 			m_captureBytes.clear();
@@ -58,9 +73,7 @@ namespace mdJucePlugin
 			m_captureIncomplete.store(false, std::memory_order_relaxed);
 			m_captureModel.store(_model, std::memory_order_release);
 		}
-		auto& machine = _model == md::MachineModel::Machinedrum
-			? m_machinedrum : m_monomachine;
-		auto& routing = machine.getMidiRoutingMatrix();
+		auto& routing = machine->getMidiRoutingMatrix();
 		using Source = synthLib::MidiEventSource;
 		using Type = synthLib::MidiRoutingMatrix::EventType;
 		m_capturePreviousHostRoute = routing.enabled(Source::Device,
@@ -76,12 +89,11 @@ namespace mdJucePlugin
 		if(!m_captureEnabled.exchange(false, std::memory_order_acq_rel))
 			return std::nullopt;
 		const auto model = m_captureModel.load(std::memory_order_acquire);
-		auto& machine = model == md::MachineModel::Machinedrum
-			? m_machinedrum : m_monomachine;
 		using Source = synthLib::MidiEventSource;
 		using Type = synthLib::MidiRoutingMatrix::EventType;
-		machine.getMidiRoutingMatrix().setEnabled(Source::Device,
-			Source::Host, Type::SysEx, m_capturePreviousHostRoute);
+		if(auto* const machine = processorFor(model))
+			machine->getMidiRoutingMatrix().setEnabled(Source::Device,
+				Source::Host, Type::SysEx, m_capturePreviousHostRoute);
 		std::lock_guard lock(m_captureMutex);
 		return SysexCapture{model, std::move(m_captureBytes),
 			m_captureIncomplete.load(std::memory_order_relaxed)};
@@ -240,7 +252,7 @@ namespace mdJucePlugin
 			m_mmWorkReady.wait();
 			if(m_stoppingWorker.load(std::memory_order_acquire))
 				return;
-			static_cast<juce::AudioProcessor&>(m_monomachine).processBlock(
+			static_cast<juce::AudioProcessor&>(*m_monomachine).processBlock(
 				m_mmAudio, m_mmMidi);
 			m_mmWorkFinished.signal();
 		}
@@ -264,25 +276,33 @@ namespace mdJucePlugin
 		m_mdMidi.ensureSize(4096);
 		m_mmMidi.ensureSize(4096);
 		m_midiRouter.reset();
-		prepareChild(m_machinedrum, _sampleRate, m_maximumBlockSize);
-		prepareChild(m_monomachine, _sampleRate, m_maximumBlockSize);
-		setLatencySamples(std::max(m_machinedrum.getLatencySamples(),
-			m_monomachine.getLatencySamples()));
+		int latency = 0;
+		for(auto* const machine : {m_machinedrum.get(), m_monomachine.get()})
+		{
+			if(!machine)
+				continue;
+			prepareChild(*machine, _sampleRate, m_maximumBlockSize);
+			latency = std::max(latency, machine->getLatencySamples());
+		}
+		setLatencySamples(latency);
 		if(juce::JUCEApplicationBase::isStandaloneApp())
 		{
 			m_stopFastBoot.store(false, std::memory_order_release);
-			m_mdFastBootWorker = std::thread([this]
-				{ runFastBoot(m_machinedrum, m_mdFastBootActive); });
-			m_mmFastBootWorker = std::thread([this]
-				{ runFastBoot(m_monomachine, m_mmFastBootActive); });
+			if(m_machinedrum)
+				m_mdFastBootWorker = std::thread([this]
+					{ runFastBoot(*m_machinedrum, m_mdFastBootActive); });
+			if(m_monomachine)
+				m_mmFastBootWorker = std::thread([this]
+					{ runFastBoot(*m_monomachine, m_mmFastBootActive); });
 		}
 	}
 
 	void CombinedProcessor::releaseResources()
 	{
 		stopFastBootWorkers();
-		static_cast<juce::AudioProcessor&>(m_machinedrum).releaseResources();
-		static_cast<juce::AudioProcessor&>(m_monomachine).releaseResources();
+		for(auto* const machine : {m_machinedrum.get(), m_monomachine.get()})
+			if(machine)
+				static_cast<juce::AudioProcessor&>(*machine).releaseResources();
 	}
 
 	void CombinedProcessor::processBlock(juce::AudioBuffer<float>& _audio,
@@ -309,8 +329,10 @@ namespace mdJucePlugin
 		m_mdMidi.clear();
 		m_mmMidi.clear();
 		const auto focused = m_maschine.focusedModel();
-		const auto selectedMmTrack = m_maschine.selectedMonomachineTrack();
-		const auto mmNoteChannel = m_monomachine.getMonomachineNoteChannel(selectedMmTrack);
+		const auto mmNoteChannel = m_monomachine
+			? m_monomachine->getMonomachineNoteChannel(
+				m_maschine.selectedMonomachineTrack())
+			: uint8_t{0xff};
 		for(const auto event : _midi)
 		{
 			const auto message = event.getMessage();
@@ -320,9 +342,9 @@ namespace mdJucePlugin
 				continue;
 			const auto destinations = m_midiRouter.route(bytes[0],
 				size > 1 ? bytes[1] : 0, size > 2 ? bytes[2] : 0, focused);
-			if(destinations & CombinedMidiRouter::machinedrum)
+			if(m_machinedrum && (destinations & CombinedMidiRouter::machinedrum))
 				m_mdMidi.addEvent(message, event.samplePosition);
-			if(destinations & CombinedMidiRouter::monomachine)
+			if(m_monomachine && (destinations & CombinedMidiRouter::monomachine))
 			{
 				const auto channels = m_midiRouter.monomachineChannels(bytes[0],
 					size > 1 ? bytes[1] : 0, size > 2 ? bytes[2] : 0,
@@ -343,6 +365,12 @@ namespace mdJucePlugin
 			}
 		}
 
+		if(m_soloModel)
+		{
+			processSolo(_audio, _midi, samples);
+			return;
+		}
+
 		// The machines do not share mutable emulation state. Run MM on its persistent
 		// high-priority worker while the host audio thread runs MD, then join at the
 		// block boundary before mixing. This keeps the heavier engine from serially
@@ -351,7 +379,7 @@ namespace mdJucePlugin
 		if(processMm)
 			m_mmWorkReady.signal();
 		if(!m_mdFastBootActive.load(std::memory_order_acquire))
-			static_cast<juce::AudioProcessor&>(m_machinedrum).processBlock(
+			static_cast<juce::AudioProcessor&>(*m_machinedrum).processBlock(
 				m_mdAudio, m_mdMidi);
 		else
 		{
@@ -379,6 +407,31 @@ namespace mdJucePlugin
 		_midi.addEvents(m_mmMidi, 0, samples, 0);
 	}
 
+	void CombinedProcessor::processSolo(juce::AudioBuffer<float>& _audio,
+		juce::MidiBuffer& _midi, const int _samples)
+	{
+		const bool monomachine = *m_soloModel == md::MachineModel::Monomachine;
+		auto& machine = monomachine ? *m_monomachine : *m_machinedrum;
+		auto& audio = monomachine ? m_mmAudio : m_mdAudio;
+		auto& midi = monomachine ? m_mmMidi : m_mdMidi;
+		const auto& fastBootActive = monomachine
+			? m_mmFastBootActive : m_mdFastBootActive;
+		if(!fastBootActive.load(std::memory_order_acquire))
+			static_cast<juce::AudioProcessor&>(machine).processBlock(audio, midi);
+		else
+		{
+			audio.clear();
+			midi.clear();
+		}
+		captureSysex(midi, *m_soloModel);
+
+		// Only one machine is playing, so it needs no headroom for a mix.
+		for(int channel = 0; channel < 2; ++channel)
+			_audio.copyFrom(channel, 0, audio, channel, 0, _samples);
+		_midi.clear();
+		_midi.addEvents(midi, 0, _samples, 0);
+	}
+
 	juce::AudioProcessorEditor* CombinedProcessor::createEditor()
 	{
 		return new CombinedEditor(*this);
@@ -388,8 +441,10 @@ namespace mdJucePlugin
 	{
 		juce::MemoryBlock mdState;
 		juce::MemoryBlock mmState;
-		static_cast<juce::AudioProcessor&>(m_machinedrum).getStateInformation(mdState);
-		static_cast<juce::AudioProcessor&>(m_monomachine).getStateInformation(mmState);
+		if(m_machinedrum)
+			static_cast<juce::AudioProcessor&>(*m_machinedrum).getStateInformation(mdState);
+		if(m_monomachine)
+			static_cast<juce::AudioProcessor&>(*m_monomachine).getStateInformation(mmState);
 		juce::MemoryOutputStream stream(_destination, false);
 		stream.writeInt(static_cast<int>(g_stateMagic));
 		stream.writeInt(g_stateVersion);
@@ -424,9 +479,12 @@ namespace mdJucePlugin
 		juce::MemoryBlock mmState(static_cast<size_t>(mmSize));
 		if(stream.read(mmState.getData(), mmState.getSize()) != mmSize)
 			return;
-		static_cast<juce::AudioProcessor&>(m_machinedrum).setStateInformation(
-			mdState.getData(), static_cast<int>(mdState.getSize()));
-		static_cast<juce::AudioProcessor&>(m_monomachine).setStateInformation(
-			mmState.getData(), static_cast<int>(mmState.getSize()));
+		// An empty block belongs to a machine absent from the saving product.
+		if(m_machinedrum && mdState.getSize() > 0)
+			static_cast<juce::AudioProcessor&>(*m_machinedrum).setStateInformation(
+				mdState.getData(), static_cast<int>(mdState.getSize()));
+		if(m_monomachine && mmState.getSize() > 0)
+			static_cast<juce::AudioProcessor&>(*m_monomachine).setStateInformation(
+				mmState.getData(), static_cast<int>(mmState.getSize()));
 	}
 }
