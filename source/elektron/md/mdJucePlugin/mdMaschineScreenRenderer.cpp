@@ -88,8 +88,11 @@ namespace mdJucePlugin::maschine
 
 	uint16_t ScreenRenderer::lcdOffColor(const md::MachineModel _model)
 	{
+		// The MK3 displays wash out colours, so the Machinedrum uses a darker
+		// red than the app panel (#ff3d0f) to look the same; chosen by eye
+		// against the panel on real hardware.
 		return _model == md::MachineModel::Monomachine
-			? rgb565(0x9a, 0xd6, 0x2a) : rgb565(0xff, 0x3d, 0x0f);
+			? rgb565(0x9a, 0xd6, 0x2a) : rgb565(0xc8, 0x0c, 0x00);
 	}
 
 	void ScreenRenderer::fillRect(Frame& _frame, const unsigned _x,
