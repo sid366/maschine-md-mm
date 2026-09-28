@@ -136,22 +136,21 @@ namespace mdJucePlugin
 		m_mmNaturalHeight = hasMachine(true) ? std::max(1, mmHeight) : 0;
 		m_naturalWidth = std::max(1, std::max(m_mdNaturalWidth, m_mmNaturalWidth));
 		m_naturalHeight = std::max(1, m_mdNaturalHeight + m_mmNaturalHeight);
-		m_preferredWidth = m_naturalWidth;
-		m_preferredHeight = m_naturalHeight;
+		// Sizes keep the panels' aspect ratio, so the window has no empty bands
+		// and the fixed-aspect constrainer does not fight the minimum size.
+		auto scale = 1.0;
 		if(const auto* display = juce::Desktop::getInstance().getDisplays()
 			.getPrimaryDisplay())
 		{
 			const auto maximum = display->userArea.reduced(24, 48);
-			const auto scale = std::min(1.0,
+			scale = std::min(1.0,
 				std::min(static_cast<double>(maximum.getWidth()) / m_naturalWidth,
 					static_cast<double>(maximum.getHeight()) / m_naturalHeight));
-			m_preferredWidth = std::max(600,
-				static_cast<int>(static_cast<double>(m_naturalWidth) * scale));
-			m_preferredHeight = std::max(600,
-				static_cast<int>(static_cast<double>(m_naturalHeight) * scale));
 		}
-		m_sizeConstrainer.setMinimumSize(600,
-			std::max(600, 600 * m_naturalHeight / m_naturalWidth));
+		scale = std::max(scale, 600.0 / m_naturalWidth);
+		m_preferredWidth = static_cast<int>(static_cast<double>(m_naturalWidth) * scale);
+		m_preferredHeight = static_cast<int>(static_cast<double>(m_naturalHeight) * scale);
+		m_sizeConstrainer.setMinimumSize(600, 600 * m_naturalHeight / m_naturalWidth);
 		m_sizeConstrainer.setMaximumSize(3840,
 			3840 * m_naturalHeight / m_naturalWidth);
 		m_sizeConstrainer.setFixedAspectRatio(
@@ -343,7 +342,10 @@ namespace mdJucePlugin
 	{
 		restorePreferredSize();
 		fixParentWindowSize();
-		if(m_restoreAttempts == 0)
+		// Only Standalone owns its window. In a plug-in the top-level component sits
+		// inside the host's window, and centring it on the screen would push the
+		// panel out of that window.
+		if(m_restoreAttempts == 0 && juce::JUCEApplicationBase::isStandaloneApp())
 		{
 			if(auto* const topLevel = getTopLevelComponent(); topLevel != this)
 				topLevel->centreWithSize(topLevel->getWidth(), topLevel->getHeight());

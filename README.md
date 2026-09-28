@@ -37,14 +37,14 @@ Suspects. Please report fork-specific issues here, not to the upstream projects.
 - **Panel look and feel:** adjust encoder-drag and mouse-wheel sensitivity in settings.
   An experimental crisp LCD/panel rendering option is also available.
 - **Audio inputs and outputs:** route host audio to the machine's input effects or sampling
-  functions. Each machine has a stereo main output and mono individual outputs
-  A–D, assigned with the machine's own routing page.
-  - Maschine MD / Maschine MM: plug-in buses *Main*, *Out A*–*Out D*; the
-    standalone app puts them on device channels 1/2 and 3–6.
+  functions. Each machine has the hardware's outputs A–F (A/B is the main pair),
+  assigned with the machine's own routing page.
+  - Maschine MD / Maschine MM: plug-in buses *Main A/B* and mono *Out A*–*Out F*;
+    the standalone app puts A–F on device channels 1–6.
   - Maschine MD-MM: plug-in buses *Main* (MD and MM mixed at half level each),
-    *MD Main*, *MD Out A*–*D*, *MM Main*, *MM Out A*–*D*. The standalone app
-    puts them on device channels 1/2, 3/4, 5–8, 9/10 and 11–14.
-  With a stereo device the standalone apps play *Main*.
+    *MD Main A/B*, *MD Out A*–*F*, *MM Main A/B*, *MM Out A*–*F*. The standalone
+    app puts the mix on device channels 1/2, MD A–F on 3–8 and MM A–F on 9–14.
+  With a stereo device the standalone apps play the main output.
 
 ## Single-machine apps (Maschine MD / Maschine MM)
 

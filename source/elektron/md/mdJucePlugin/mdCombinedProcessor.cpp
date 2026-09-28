@@ -34,37 +34,47 @@ namespace mdJucePlugin
 		}
 	}
 
-	// Each machine renders six outputs: its main pair (channels 0/1) and the
-	// individual outputs A-D (2-5, mono as on the hardware). The product's
-	// outputs are listed below. Plug-in hosts get one bus per entry; JUCE
-	// Standalone only opens the main bus, so there all entries form one main
-	// bus in this order. The first entry is always the stereo main output, so a
-	// stereo device plays the main mix.
+	// Each machine renders its six outputs A-F as on the hardware: A/B is the
+	// main pair (channels 0/1), C-F are the individual outputs (2-5). The
+	// product's outputs are listed below. Plug-in hosts get one bus per entry,
+	// including A and B on their own. JUCE Standalone only opens the main bus, so
+	// there the other entries form one main bus in this order. The first entry
+	// is always the stereo main output, so a stereo device plays the main mix.
 	std::vector<CombinedProcessor::OutputSlot> CombinedProcessor::outputSlots(
 		const std::optional<md::MachineModel> _soloModel)
 	{
+		const auto machineOutputs = [](std::vector<OutputSlot>& _slots,
+			const int _machine, const char* const (&_names)[7])
+		{
+			_slots.push_back({_names[0], 2, _machine, 0});
+			for(int output = 0; output < 6; ++output)
+				_slots.push_back({_names[output + 1], 1, _machine, output, output < 2});
+		};
+		std::vector<OutputSlot> slots;
 		if(_soloModel)
 		{
-			const auto machine = *_soloModel == md::MachineModel::Monomachine
-				? g_monomachineOutput : g_machinedrumOutput;
-			return {{"Main", 2, machine, 0}, {"Out A", 1, machine, 2},
-				{"Out B", 1, machine, 3}, {"Out C", 1, machine, 4},
-				{"Out D", 1, machine, 5}};
+			static const char* const names[7] = {"Main A/B",
+				"Out A", "Out B", "Out C", "Out D", "Out E", "Out F"};
+			machineOutputs(slots, *_soloModel == md::MachineModel::Monomachine
+				? g_monomachineOutput : g_machinedrumOutput, names);
+			return slots;
 		}
-		return {{"Main", 2, g_mixOutput, 0},
-			{"MD Main", 2, g_machinedrumOutput, 0},
-			{"MD Out A", 1, g_machinedrumOutput, 2}, {"MD Out B", 1, g_machinedrumOutput, 3},
-			{"MD Out C", 1, g_machinedrumOutput, 4}, {"MD Out D", 1, g_machinedrumOutput, 5},
-			{"MM Main", 2, g_monomachineOutput, 0},
-			{"MM Out A", 1, g_monomachineOutput, 2}, {"MM Out B", 1, g_monomachineOutput, 3},
-			{"MM Out C", 1, g_monomachineOutput, 4}, {"MM Out D", 1, g_monomachineOutput, 5}};
+		static const char* const mdNames[7] = {"MD Main A/B",
+			"MD Out A", "MD Out B", "MD Out C", "MD Out D", "MD Out E", "MD Out F"};
+		static const char* const mmNames[7] = {"MM Main A/B",
+			"MM Out A", "MM Out B", "MM Out C", "MM Out D", "MM Out E", "MM Out F"};
+		slots.push_back({"Main", 2, g_mixOutput, 0});
+		machineOutputs(slots, g_machinedrumOutput, mdNames);
+		machineOutputs(slots, g_monomachineOutput, mmNames);
+		return slots;
 	}
 
-	int CombinedProcessor::countOutputChannels(const std::vector<OutputSlot>& _slots)
+	int CombinedProcessor::countStandaloneChannels(const std::vector<OutputSlot>& _slots)
 	{
 		int channels = 0;
 		for(const auto& slot : _slots)
-			channels += slot.width;
+			if(!slot.pluginOnly)
+				channels += slot.width;
 		return channels;
 	}
 
@@ -76,7 +86,7 @@ namespace mdJucePlugin
 		const auto slots = outputSlots(_soloModel);
 		if(_standaloneOutputs)
 		{
-			const auto channels = countOutputChannels(slots);
+			const auto channels = countStandaloneChannels(slots);
 			return buses.withOutput("Outputs 1-" + juce::String(channels),
 				juce::AudioChannelSet::discreteChannels(channels), true);
 		}
@@ -93,7 +103,7 @@ namespace mdJucePlugin
 		, m_soloModel(_soloModel)
 		, m_standaloneOutputs(juce::JUCEApplicationBase::isStandaloneApp())
 		, m_outputSlots(outputSlots(_soloModel))
-		, m_outputChannels(countOutputChannels(m_outputSlots))
+		, m_outputChannels(countStandaloneChannels(m_outputSlots))
 		, m_machinedrum(createMachine(md::MachineModel::Machinedrum, _soloModel))
 		, m_monomachine(createMachine(md::MachineModel::Monomachine, _soloModel))
 		, m_maschine(m_machinedrum.get(), m_monomachine.get())
@@ -512,6 +522,8 @@ namespace mdJucePlugin
 		for(size_t slotIndex = 0; slotIndex < m_outputSlots.size(); ++slotIndex)
 		{
 			const auto& slot = m_outputSlots[slotIndex];
+			if(m_standaloneOutputs && slot.pluginOnly)
+				continue;
 			// Standalone: consecutive channels of the single main bus (as many as
 			// the device opened). Plug-in: this slot's own bus, if enabled.
 			auto target = m_standaloneOutputs

@@ -75,10 +75,11 @@ namespace mdJucePlugin
 			const char* name;
 			int width;		// 2 = stereo, 1 = mono
 			int machine;	// g_machinedrumOutput, g_monomachineOutput or g_mixOutput
-			int source;		// first channel of the machine's six outputs
+			int source;		// first channel of the machine's six outputs A-F
+			bool pluginOnly = false;	// already part of a stereo pair in Standalone
 		};
 		static std::vector<OutputSlot> outputSlots(std::optional<md::MachineModel> _soloModel);
-		static int countOutputChannels(const std::vector<OutputSlot>& _slots);
+		static int countStandaloneChannels(const std::vector<OutputSlot>& _slots);
 		static BusesProperties createBuses(std::optional<md::MachineModel> _soloModel,
 			bool _standaloneOutputs);
 		void writeOutputs(juce::AudioBuffer<float>& _audio, int _samples);
