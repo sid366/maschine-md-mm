@@ -92,7 +92,7 @@ namespace mdJucePlugin::maschine
 		// (#8fcb20 / #ff3d0f), so these were chosen by eye against the panel on
 		// real hardware to look the same.
 		return _model == md::MachineModel::Monomachine
-			? rgb565(0x76, 0xcc, 0x14) : rgb565(0xc8, 0x0c, 0x00);
+			? rgb565(0x76, 0xd8, 0x15) : rgb565(0xc8, 0x0c, 0x00);
 	}
 
 	void ScreenRenderer::fillRect(Frame& _frame, const unsigned _x,
