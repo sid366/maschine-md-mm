@@ -67,12 +67,21 @@ namespace mdJucePlugin
 		void setStateInformation(const void* _data, int _size) override;
 
 	private:
-		static constexpr int g_machineOutputs = 6;
-		static constexpr int g_individualOutputs = 4;
+		static constexpr int g_machinedrumOutput = 0;
+		static constexpr int g_monomachineOutput = 1;
+		static constexpr int g_mixOutput = 2;
+		struct OutputSlot
+		{
+			const char* name;
+			int width;		// 2 = stereo, 1 = mono
+			int machine;	// g_machinedrumOutput, g_monomachineOutput or g_mixOutput
+			int source;		// first channel of the machine's six outputs
+		};
+		static std::vector<OutputSlot> outputSlots(std::optional<md::MachineModel> _soloModel);
+		static int countOutputChannels(const std::vector<OutputSlot>& _slots);
 		static BusesProperties createBuses(std::optional<md::MachineModel> _soloModel,
 			bool _standaloneOutputs);
-		void processSolo(juce::AudioBuffer<float>& _audio, juce::MidiBuffer& _midi,
-			int _samples);
+		void writeOutputs(juce::AudioBuffer<float>& _audio, int _samples);
 		void runMonomachineWorker();
 		void captureSysex(const juce::MidiBuffer& _midi, md::MachineModel _model);
 		void runFastBoot(AudioPluginAudioProcessor& _processor,
@@ -81,7 +90,8 @@ namespace mdJucePlugin
 
 		const std::optional<md::MachineModel> m_soloModel;
 		const bool m_standaloneOutputs;
-		juce::AudioBuffer<float> m_machineBuffer;
+		const std::vector<OutputSlot> m_outputSlots;
+		const int m_outputChannels;
 		std::unique_ptr<AudioPluginAudioProcessor> m_machinedrum;
 		std::unique_ptr<AudioPluginAudioProcessor> m_monomachine;
 		maschine::Controller m_maschine;

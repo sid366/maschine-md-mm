@@ -37,20 +37,27 @@ Suspects. Please report fork-specific issues here, not to the upstream projects.
 - **Panel look and feel:** adjust encoder-drag and mouse-wheel sensitivity in settings.
   An experimental crisp LCD/panel rendering option is also available.
 - **Audio inputs and outputs:** route host audio to the machine's input effects or sampling
-  functions. Additional output pairs are available in a multi-output VST3 host;
-  the standalone apps use stereo output.
+  functions. Each machine has a stereo main output and mono individual outputs
+  A–D, assigned with the machine's own routing page.
+  - Maschine MD / Maschine MM: plug-in buses *Main*, *Out A*–*Out D*; the
+    standalone app puts them on device channels 1/2 and 3–6.
+  - Maschine MD-MM: plug-in buses *Main* (MD and MM mixed at half level each),
+    *MD Main*, *MD Out A*–*D*, *MM Main*, *MM Out A*–*D*. The standalone app
+    puts them on device channels 1/2, 3/4, 5–8, 9/10 and 11–14.
+  With a stereo device the standalone apps play *Main*.
 
 ## Single-machine apps (Maschine MD / Maschine MM)
 
-**Maschine MD** and **Maschine MM** are standalone apps with the same Maschine
+**Maschine MD** and **Maschine MM** are apps and plug-ins with the same Maschine
 MK3 integration as the combined app, but each emulates only one machine. Use
 them on computers that cannot run both emulations at once. The other
 instrument's display shows that instrument's name. They use the same
 firmware folders as the combined app, but each keeps its own saved session
 (patterns and kits); move work between apps with a SysEx dump.
 
-Build them with the targets `mdSoloJucePlugin_Standalone` and
-`mmSoloJucePlugin_Standalone`.
+Build them with the `mdSoloJucePlugin_*` and `mmSoloJucePlugin_*` targets
+(`_Standalone`, `_VST3`, `_AU`). One Maschine plug-in instance at a time controls
+the MK3; when it is removed, the next instance takes over.
 
 ## Using a Maschine MK3
 

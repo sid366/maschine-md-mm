@@ -34,24 +34,56 @@ namespace mdJucePlugin
 		}
 	}
 
-	// A single-machine product offers the machine's six outputs: the main
-	// stereo pair plus the four individual outputs A-D, which are mono as on the
-	// hardware. Plug-in hosts get a stereo main bus and four mono buses. JUCE
-	// Standalone only opens the main bus, so there the six outputs form one
-	// main bus: channels 1/2 main, 3-6 outputs A-D. The combined product mixes
-	// both machines to stereo.
+	// Each machine renders six outputs: its main pair (channels 0/1) and the
+	// individual outputs A-D (2-5, mono as on the hardware). The product's
+	// outputs are listed below. Plug-in hosts get one bus per entry; JUCE
+	// Standalone only opens the main bus, so there all entries form one main
+	// bus in this order. The first entry is always the stereo main output, so a
+	// stereo device plays the main mix.
+	std::vector<CombinedProcessor::OutputSlot> CombinedProcessor::outputSlots(
+		const std::optional<md::MachineModel> _soloModel)
+	{
+		if(_soloModel)
+		{
+			const auto machine = *_soloModel == md::MachineModel::Monomachine
+				? g_monomachineOutput : g_machinedrumOutput;
+			return {{"Main", 2, machine, 0}, {"Out A", 1, machine, 2},
+				{"Out B", 1, machine, 3}, {"Out C", 1, machine, 4},
+				{"Out D", 1, machine, 5}};
+		}
+		return {{"Main", 2, g_mixOutput, 0},
+			{"MD Main", 2, g_machinedrumOutput, 0},
+			{"MD Out A", 1, g_machinedrumOutput, 2}, {"MD Out B", 1, g_machinedrumOutput, 3},
+			{"MD Out C", 1, g_machinedrumOutput, 4}, {"MD Out D", 1, g_machinedrumOutput, 5},
+			{"MM Main", 2, g_monomachineOutput, 0},
+			{"MM Out A", 1, g_monomachineOutput, 2}, {"MM Out B", 1, g_monomachineOutput, 3},
+			{"MM Out C", 1, g_monomachineOutput, 4}, {"MM Out D", 1, g_monomachineOutput, 5}};
+	}
+
+	int CombinedProcessor::countOutputChannels(const std::vector<OutputSlot>& _slots)
+	{
+		int channels = 0;
+		for(const auto& slot : _slots)
+			channels += slot.width;
+		return channels;
+	}
+
 	juce::AudioProcessor::BusesProperties CombinedProcessor::createBuses(
 		const std::optional<md::MachineModel> _soloModel, const bool _standaloneOutputs)
 	{
 		auto buses = BusesProperties()
 			.withInput("Input A/B", juce::AudioChannelSet::stereo(), true);
-		if(_soloModel && _standaloneOutputs)
-			return buses.withOutput("Outputs 1-6",
-				juce::AudioChannelSet::discreteChannels(g_machineOutputs), true);
-		buses = buses.withOutput("Main", juce::AudioChannelSet::stereo(), true);
-		if(_soloModel)
-			for(const auto* name : {"Out A", "Out B", "Out C", "Out D"})
-				buses = buses.withOutput(name, juce::AudioChannelSet::mono(), false);
+		const auto slots = outputSlots(_soloModel);
+		if(_standaloneOutputs)
+		{
+			const auto channels = countOutputChannels(slots);
+			return buses.withOutput("Outputs 1-" + juce::String(channels),
+				juce::AudioChannelSet::discreteChannels(channels), true);
+		}
+		for(size_t slot = 0; slot < slots.size(); ++slot)
+			buses = buses.withOutput(slots[slot].name, slots[slot].width == 2
+				? juce::AudioChannelSet::stereo() : juce::AudioChannelSet::mono(),
+				slot == 0);
 		return buses;
 	}
 
@@ -59,7 +91,9 @@ namespace mdJucePlugin
 		: AudioProcessor(createBuses(_soloModel,
 			juce::JUCEApplicationBase::isStandaloneApp()))
 		, m_soloModel(_soloModel)
-		, m_standaloneOutputs(_soloModel && juce::JUCEApplicationBase::isStandaloneApp())
+		, m_standaloneOutputs(juce::JUCEApplicationBase::isStandaloneApp())
+		, m_outputSlots(outputSlots(_soloModel))
+		, m_outputChannels(countOutputChannels(m_outputSlots))
 		, m_machinedrum(createMachine(md::MachineModel::Machinedrum, _soloModel))
 		, m_monomachine(createMachine(md::MachineModel::Monomachine, _soloModel))
 		, m_maschine(m_machinedrum.get(), m_monomachine.get())
@@ -282,36 +316,30 @@ namespace mdJucePlugin
 	bool CombinedProcessor::isBusesLayoutSupported(
 		const BusesLayout& _layouts) const
 	{
+		const auto input = _layouts.getMainInputChannelSet();
+		if(_layouts.inputBuses.size() != 1
+			|| !(input.isDisabled() || input == juce::AudioChannelSet::stereo()))
+			return false;
 		if(m_standaloneOutputs)
 		{
-			// Keep all six channels whatever the device offers. JUCE's player
+			// Keep every output channel whatever the device offers. JUCE's player
 			// otherwise switches the processor to a stereo device's layout, and
 			// Standalone then never offers more than two outputs again. On a
 			// stereo device the player simply passes on the first two (main).
-			const auto input = _layouts.getMainInputChannelSet();
 			return _layouts.outputBuses.size() == 1
-				&& (input.isDisabled() || input == juce::AudioChannelSet::stereo())
-				&& _layouts.getMainOutputChannelSet().size() == g_machineOutputs;
+				&& _layouts.getMainOutputChannelSet().size() == m_outputChannels;
 		}
-		if(m_soloModel)
+		if(_layouts.outputBuses.size() != static_cast<int>(m_outputSlots.size())
+			|| _layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
+			return false;
+		for(int bus = 1; bus < _layouts.outputBuses.size(); ++bus)
 		{
-			const auto input = _layouts.getMainInputChannelSet();
-			if(_layouts.inputBuses.size() != 1
-				|| !(input.isDisabled() || input == juce::AudioChannelSet::stereo())
-				|| _layouts.outputBuses.size() != 1 + g_individualOutputs
-				|| _layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
+			const auto channels = _layouts.getChannelSet(false, bus);
+			if(!channels.isDisabled()
+				&& channels.size() != m_outputSlots[static_cast<size_t>(bus)].width)
 				return false;
-			for(int bus = 1; bus < _layouts.outputBuses.size(); ++bus)
-			{
-				const auto channels = _layouts.getChannelSet(false, bus);
-				if(!channels.isDisabled() && channels != juce::AudioChannelSet::mono())
-					return false;
-			}
-			return true;
 		}
-		return _layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo()
-			&& (_layouts.getMainInputChannelSet().isDisabled()
-				|| _layouts.getMainInputChannelSet() == juce::AudioChannelSet::stereo());
+		return true;
 	}
 
 	void CombinedProcessor::prepareToPlay(const double _sampleRate,
@@ -319,8 +347,6 @@ namespace mdJucePlugin
 	{
 		stopFastBootWorkers();
 		m_maximumBlockSize = std::max(1, _maximumBlockSize);
-		m_mdAudio.setSize(2, m_maximumBlockSize, false, true);
-		m_mmAudio.setSize(2, m_maximumBlockSize, false, true);
 		m_mdMidi.ensureSize(4096);
 		m_mmMidi.ensureSize(4096);
 		m_midiRouter.reset();
@@ -329,19 +355,14 @@ namespace mdJucePlugin
 		{
 			if(!machine)
 				continue;
-			// A single machine always renders all three of its output pairs;
-			// processSolo() hands them to this product's buses. The combined
-			// product mixes stereo children.
+			// Every machine renders all three of its output pairs; processBlock()
+			// hands them to this product's outputs.
 			auto machineLayout = machine->getBusesLayout();
-			if(m_soloModel)
-			{
-				machineLayout.inputBuses.set(0, getBusesLayout().getMainInputChannelSet().isDisabled()
-					? juce::AudioChannelSet::disabled() : juce::AudioChannelSet::stereo());
-				for(int bus = 0; bus < machineLayout.outputBuses.size(); ++bus)
-					machineLayout.outputBuses.set(bus, juce::AudioChannelSet::stereo());
-				m_machineBuffer.setSize(g_machineOutputs, m_maximumBlockSize, false, true);
-			}
-			if(!m_soloModel || !machine->setBusesLayout(machineLayout))
+			machineLayout.inputBuses.set(0, getBusesLayout().getMainInputChannelSet().isDisabled()
+				? juce::AudioChannelSet::disabled() : juce::AudioChannelSet::stereo());
+			for(int bus = 0; bus < machineLayout.outputBuses.size(); ++bus)
+				machineLayout.outputBuses.set(bus, juce::AudioChannelSet::stereo());
+			if(!machine->setBusesLayout(machineLayout))
 				prepareChild(*machine, _sampleRate, m_maximumBlockSize);
 			else
 			{
@@ -349,6 +370,10 @@ namespace mdJucePlugin
 				static_cast<juce::AudioProcessor&>(*machine).prepareToPlay(
 					_sampleRate, m_maximumBlockSize);
 			}
+			(machine == m_machinedrum.get() ? m_mdAudio : m_mmAudio).setSize(
+				std::max(machine->getTotalNumInputChannels(),
+					machine->getTotalNumOutputChannels()),
+				m_maximumBlockSize, false, true);
 			latency = std::max(latency, machine->getLatencySamples());
 		}
 		setLatencySamples(latency);
@@ -386,13 +411,22 @@ namespace mdJucePlugin
 			return;
 		}
 
-		m_mdAudio.setSize(2, samples, false, false, true);
-		m_mmAudio.setSize(2, samples, false, false, true);
-		for(int channel = 0; channel < 2; ++channel)
+		// Each machine gets the host input and renders into its own buffer.
+		const auto prepareMachineBuffer = [&](juce::AudioBuffer<float>& _buffer,
+			const AudioPluginAudioProcessor* const _machine)
 		{
-			m_mdAudio.copyFrom(channel, 0, _audio, channel, 0, samples);
-			m_mmAudio.copyFrom(channel, 0, _audio, channel, 0, samples);
-		}
+			if(!_machine)
+				return;
+			_buffer.setSize(std::max(_machine->getTotalNumInputChannels(),
+				_machine->getTotalNumOutputChannels()), samples, false, false, true);
+			_buffer.clear();
+			const auto inputs = std::min(_machine->getTotalNumInputChannels(),
+				_audio.getNumChannels());
+			for(int channel = 0; channel < inputs; ++channel)
+				_buffer.copyFrom(channel, 0, _audio, channel, 0, samples);
+		};
+		prepareMachineBuffer(m_mdAudio, m_machinedrum.get());
+		prepareMachineBuffer(m_mmAudio, m_monomachine.get());
 		m_mdMidi.clear();
 		m_mmMidi.clear();
 		const auto focused = m_maschine.focusedModel();
@@ -432,20 +466,18 @@ namespace mdJucePlugin
 			}
 		}
 
-		if(m_soloModel)
-		{
-			processSolo(_audio, _midi, samples);
-			return;
-		}
-
-		// The machines do not share mutable emulation state. Run MM on its persistent
-		// high-priority worker while the host audio thread runs MD, then join at the
-		// block boundary before mixing. This keeps the heavier engine from serially
-		// consuming the other engine's deadline budget.
-		const bool processMm = !m_mmFastBootActive.load(std::memory_order_acquire);
-		if(processMm)
+		// The machines do not share mutable emulation state. With both present,
+		// run MM on its persistent high-priority worker while the host audio thread
+		// runs MD, then join at the block boundary. This keeps the heavier engine
+		// from serially consuming the other engine's deadline budget.
+		const bool runMd = m_machinedrum
+			&& !m_mdFastBootActive.load(std::memory_order_acquire);
+		const bool runMm = m_monomachine
+			&& !m_mmFastBootActive.load(std::memory_order_acquire);
+		const bool mmOnWorker = runMm && m_machinedrum;
+		if(mmOnWorker)
 			m_mmWorkReady.signal();
-		if(!m_mdFastBootActive.load(std::memory_order_acquire))
+		if(runMd)
 			static_cast<juce::AudioProcessor&>(*m_machinedrum).processBlock(
 				m_mdAudio, m_mdMidi);
 		else
@@ -453,8 +485,11 @@ namespace mdJucePlugin
 			m_mdAudio.clear();
 			m_mdMidi.clear();
 		}
-		if(processMm)
+		if(mmOnWorker)
 			m_mmWorkFinished.wait();
+		else if(runMm)
+			static_cast<juce::AudioProcessor&>(*m_monomachine).processBlock(
+				m_mmAudio, m_mmMidi);
 		else
 		{
 			m_mmAudio.clear();
@@ -463,77 +498,47 @@ namespace mdJucePlugin
 		captureSysex(m_mdMidi, md::MachineModel::Machinedrum);
 		captureSysex(m_mmMidi, md::MachineModel::Monomachine);
 
-		for(int channel = 0; channel < 2; ++channel)
-		{
-			_audio.copyFrom(channel, 0, m_mdAudio, channel, 0, samples);
-			_audio.applyGain(channel, 0, samples, 0.5f);
-			_audio.addFrom(channel, 0, m_mmAudio, channel, 0, samples, 0.5f);
-		}
+		writeOutputs(_audio, samples);
 		_midi.clear();
 		_midi.addEvents(m_mdMidi, 0, samples, 0);
 		_midi.addEvents(m_mmMidi, 0, samples, 0);
 	}
 
-	void CombinedProcessor::processSolo(juce::AudioBuffer<float>& _audio,
-		juce::MidiBuffer& _midi, const int _samples)
+	void CombinedProcessor::writeOutputs(juce::AudioBuffer<float>& _audio,
+		const int _samples)
 	{
-		const bool monomachine = *m_soloModel == md::MachineModel::Monomachine;
-		auto& machine = monomachine ? *m_monomachine : *m_machinedrum;
-		auto& audio = monomachine ? m_mmAudio : m_mdAudio;
-		auto& midi = monomachine ? m_mmMidi : m_mdMidi;
-		const auto& fastBootActive = monomachine
-			? m_mmFastBootActive : m_mdFastBootActive;
-		const auto machineChannels = std::max(machine.getTotalNumInputChannels(),
-			machine.getTotalNumOutputChannels());
-		if(fastBootActive.load(std::memory_order_acquire))
+		_audio.clear();
+		int standaloneChannel = 0;
+		for(size_t slotIndex = 0; slotIndex < m_outputSlots.size(); ++slotIndex)
 		{
-			_audio.clear();
-			midi.clear();
-		}
-		else if(machineChannels == m_machineBuffer.getNumChannels())
-		{
-			// Render the machine's six outputs, then hand them to this product's
-			// output channels: all six in Standalone (as many as the device
-			// opened), otherwise main stereo plus any enabled mono outputs A-D.
-			m_machineBuffer.setSize(g_machineOutputs, _samples, false, false, true);
-			m_machineBuffer.clear();
-			const auto inputs = std::min(machine.getTotalNumInputChannels(),
-				_audio.getNumChannels());
-			for(int channel = 0; channel < inputs; ++channel)
-				m_machineBuffer.copyFrom(channel, 0, _audio, channel, 0, _samples);
-			static_cast<juce::AudioProcessor&>(machine).processBlock(m_machineBuffer, midi);
-			_audio.clear();
-			if(m_standaloneOutputs)
+			const auto& slot = m_outputSlots[slotIndex];
+			// Standalone: consecutive channels of the single main bus (as many as
+			// the device opened). Plug-in: this slot's own bus, if enabled.
+			auto target = m_standaloneOutputs
+				? juce::AudioBuffer<float>(_audio.getArrayOfWritePointers()
+					+ std::min(standaloneChannel, _audio.getNumChannels()),
+					std::clamp(_audio.getNumChannels() - standaloneChannel, 0, slot.width),
+					_samples)
+				: getBusBuffer(_audio, false, static_cast<int>(slotIndex));
+			standaloneChannel += slot.width;
+			const auto channels = std::min(target.getNumChannels(), slot.width);
+			for(int channel = 0; channel < channels; ++channel)
 			{
-				for(int channel = 0; channel < std::min(_audio.getNumChannels(),
-					g_machineOutputs); ++channel)
-					_audio.copyFrom(channel, 0, m_machineBuffer, channel, 0, _samples);
-			}
-			else
-			{
-				int source = 0;
-				for(int bus = 0; bus < getBusCount(false); ++bus)
+				const auto source = slot.source + channel;
+				if(slot.machine == g_mixOutput)
 				{
-					const auto width = bus == 0 ? 2 : 1;
-					auto busBuffer = getBusBuffer(_audio, false, bus);
-					for(int channel = 0; channel < busBuffer.getNumChannels()
-						&& channel < width; ++channel)
-						busBuffer.copyFrom(channel, 0, m_machineBuffer, source + channel, 0, _samples);
-					source += width;
+					// Both machines' main outputs, each at half level.
+					if(source < m_mdAudio.getNumChannels())
+						target.addFrom(channel, 0, m_mdAudio, source, 0, _samples, 0.5f);
+					if(source < m_mmAudio.getNumChannels())
+						target.addFrom(channel, 0, m_mmAudio, source, 0, _samples, 0.5f);
+					continue;
 				}
+				const auto& buffer = slot.machine == g_monomachineOutput ? m_mmAudio : m_mdAudio;
+				if(source < buffer.getNumChannels())
+					target.copyFrom(channel, 0, buffer, source, 0, _samples);
 			}
 		}
-		else
-		{
-			// Stereo fallback, for a machine prepared without the host layout.
-			static_cast<juce::AudioProcessor&>(machine).processBlock(audio, midi);
-			_audio.clear();
-			for(int channel = 0; channel < 2; ++channel)
-				_audio.copyFrom(channel, 0, audio, channel, 0, _samples);
-		}
-		captureSysex(midi, *m_soloModel);
-		_midi.clear();
-		_midi.addEvents(midi, 0, _samples, 0);
 	}
 
 	juce::AudioProcessorEditor* CombinedProcessor::createEditor()
