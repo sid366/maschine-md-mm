@@ -72,10 +72,11 @@ namespace mdJucePlugin::maschine
 				? "MONOMACHINE" : "MACHINEDRUM";
 		}
 
+		// Each machine's highlight (name, LCD border, labels) is its LCD colour,
+		// so the whole display reads as one colour scheme.
 		uint16_t accent(const md::MachineModel _model)
 		{
-			return _model == md::MachineModel::Monomachine
-				? ScreenRenderer::lcdOffColor(_model) : 0xf9e7;
+			return ScreenRenderer::lcdOffColor(_model);
 		}
 	}
 
