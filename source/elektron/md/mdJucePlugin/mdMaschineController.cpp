@@ -94,6 +94,7 @@ namespace mdJucePlugin::maschine
 			case 30: return 52; // Pattern
 			case 34: return 55; // Duplicate / Paste
 			case 35: return 56; // Select / Enter
+			case 36: return 57; // Solo
 			case 37: return 58; // Mute
 			default: return {};
 			}
@@ -624,29 +625,30 @@ namespace mdJucePlugin::maschine
 			m_waitCondition.notify_all();
 			return;
 		}
+		if(_event.id == 36)
+		{
+			std::lock_guard lock(m_inputMutex);
+			m_soloHeld = _event.pressed;
+			m_waitCondition.notify_all();
+			return;
+		}
 		if(_event.id == 45 || _event.id == 47)
 		{
+			// PLAY/STOP drive both machines. SOLO + PLAY/STOP drives only the
+			// focused one, and SHIFT + PLAY/STOP reaches the focused machine as
+			// FUNCTION + PLAY/STOP (clear/paste), as on the hardware; both of
+			// those continue below through the normal single-machine path.
 			bool dual = false;
-			bool releaseFunction = false;
-			md::MachineModel functionTarget{};
 			{
 				std::lock_guard lock(m_inputMutex);
 				if(_event.pressed)
-					m_dualTransportGesture[_event.id] = m_shiftHeld;
+					m_dualTransportGesture[_event.id] = !m_shiftHeld && !m_soloHeld;
 				dual = m_dualTransportGesture[_event.id];
 				if(!_event.pressed)
 					m_dualTransportGesture[_event.id] = false;
-				if(dual && m_shiftFunctionForwarded)
-				{
-					releaseFunction = true;
-					functionTarget = m_shiftFunctionTarget;
-					m_shiftFunctionForwarded = false;
-				}
 			}
 			if(dual)
 			{
-				if(releaseFunction)
-					sendControl(functionTarget, md::PanelControl::Function, false);
 				const auto control = _event.id == 45
 					? md::PanelControl::Play : md::PanelControl::Stop;
 				sendControl(md::MachineModel::Machinedrum, control, _event.pressed);

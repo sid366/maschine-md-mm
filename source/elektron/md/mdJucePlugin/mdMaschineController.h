@@ -93,6 +93,7 @@ namespace mdJucePlugin::maschine
 		bool m_noteRepeatHeld = false;
 		bool m_padModeHeld = false;
 		bool m_muteHeld = false;
+		bool m_soloHeld = false;
 		bool m_mixerHeld = false;
 		bool m_randomLightsEnabled = false;
 		Lightshow m_lightshow = Lightshow::Random;

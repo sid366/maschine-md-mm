@@ -90,10 +90,12 @@ refer to the eight buttons above the screens, counted from left to right.
 | Pad 1–16 | Press the corresponding trig/step; when a pattern bank is held, select that pattern slot. |
 | Group A–H + pad | Select a pattern in bank A–H. A–D and E–H also switch the instrument's bank group as needed. |
 | SHIFT | Hold the instrument's FUNCTION key for its firmware shortcuts. |
-| SHIFT + PLAY / STOP | Start / stop **both** instruments together. |
+| PLAY / STOP | Start / stop **both** instruments together. |
+| SOLO + PLAY / STOP | Start / stop only the focused instrument. |
+| SHIFT + PLAY / STOP | Send FUNCTION + PLAY (clear) / FUNCTION + STOP (paste) to the focused instrument, as on the hardware. |
 | PLAY + RECORD | Send the instrument's real-time recording gesture. |
 | ERASE / DUPLICATE | Send FUNCTION + PLAY (clear) / FUNCTION + STOP (paste) to the focused instrument. |
-| PLAY / RECORD / STOP | Use the focused instrument's transport controls. |
+| RECORD | Use the focused instrument's RECORD key. |
 | MIXER + knob 1 / knob 8 | Adjust the selected track's LEVEL/DATA / the app's master output level for the focused instrument. |
 | SAMPLING + turn 5D encoder | Cycle the MK3 lighting effects. |
 | SHIFT + SAMPLING | Toggle decorative lighting on the MK3. |
