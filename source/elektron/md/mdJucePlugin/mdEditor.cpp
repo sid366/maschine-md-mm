@@ -50,10 +50,10 @@ namespace mdJucePlugin
 		// displays, both positive: lit red/orange backlight with dark pixels on the
 		// Machinedrum, pale green-grey with dark pixels on the Monomachine. "Off" is
 		// therefore the bright backlight and "on" the dark set pixel.
-		constexpr uint32_t g_mdLcdOff = 0xffe0472b;
-		constexpr uint32_t g_mdLcdOn  = 0xff38100a;
-		constexpr uint32_t g_mmLcdOff = 0xffb9c8b2;
-		constexpr uint32_t g_mmLcdOn  = 0xff1a2b1e;
+		constexpr uint32_t g_mdLcdOff = 0xffff3d0f;
+		constexpr uint32_t g_mdLcdOn  = 0xff1a0200;
+		constexpr uint32_t g_mmLcdOff = 0xff9ad62a;
+		constexpr uint32_t g_mmLcdOn  = 0xff0a1602;
 
 		// A skin button bound to a logical control. The packet is selected using the
 		// actual device model when the editor is created.

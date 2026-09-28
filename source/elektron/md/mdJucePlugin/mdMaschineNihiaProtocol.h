@@ -44,6 +44,7 @@ namespace mdJucePlugin::maschine::nihia
 		Red = 1,
 		Orange = 2,
 		Yellow = 5,
+		Lime = 6,
 		Green = 7,
 		Mint = 8,
 		Cyan = 9,

@@ -1024,7 +1024,7 @@ namespace mdJucePlugin::maschine
 			? _mmPanel : _mdPanel;
 		setStripLeds(result, panel, focused);
 		const auto accent = focused == md::MachineModel::Monomachine
-			? nihia::LedColor::Mint : nihia::LedColor::Orange;
+			? nihia::LedColor::Lime : nihia::LedColor::Orange;
 
 		for(uint32_t id = 0; id < buttons.size(); ++id)
 			if(const auto led = buttonLed(id))
@@ -1100,7 +1100,7 @@ namespace mdJucePlugin::maschine
 		// The two focus keys remain visible in their machine colors.
 		nihia::setLed(result, 13, nihia::LedColor::Orange,
 			focused == md::MachineModel::Machinedrum ? 3 : 1);
-		nihia::setLed(result, 17, nihia::LedColor::Mint,
+		nihia::setLed(result, 17, nihia::LedColor::Lime,
 			focused == md::MachineModel::Monomachine ? 3 : 1);
 
 		// Maschine Group A-H map directly to Elektron pattern banks A-H.
@@ -1199,7 +1199,7 @@ namespace mdJucePlugin::maschine
 					case md::FrontPanel::LedColor::Yellow:
 						color = nihia::LedColor::Yellow; lit = true; break;
 					default:
-						color = nihia::LedColor::Mint; break;
+						color = nihia::LedColor::Lime; break;
 					}
 				}
 				else

@@ -82,13 +82,13 @@ namespace mdJucePlugin::maschine
 	uint16_t ScreenRenderer::lcdOnColor(const md::MachineModel _model)
 	{
 		return _model == md::MachineModel::Monomachine
-			? rgb565(0x1a, 0x2b, 0x1e) : rgb565(0x38, 0x10, 0x0a);
+			? rgb565(0x0a, 0x16, 0x02) : rgb565(0x1a, 0x02, 0x00);
 	}
 
 	uint16_t ScreenRenderer::lcdOffColor(const md::MachineModel _model)
 	{
 		return _model == md::MachineModel::Monomachine
-			? rgb565(0xb9, 0xc8, 0xb2) : rgb565(0xe0, 0x47, 0x2b);
+			? rgb565(0x9a, 0xd6, 0x2a) : rgb565(0xff, 0x3d, 0x0f);
 	}
 
 	void ScreenRenderer::fillRect(Frame& _frame, const unsigned _x,
