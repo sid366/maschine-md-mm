@@ -67,6 +67,9 @@ namespace mdJucePlugin
 		void setStateInformation(const void* _data, int _size) override;
 
 	private:
+		static constexpr int g_standaloneOutputs = 6;
+		static BusesProperties createBuses(std::optional<md::MachineModel> _soloModel,
+			bool _standaloneOutputs);
 		void processSolo(juce::AudioBuffer<float>& _audio, juce::MidiBuffer& _midi,
 			int _samples);
 		void runMonomachineWorker();
@@ -76,6 +79,8 @@ namespace mdJucePlugin
 		void stopFastBootWorkers();
 
 		const std::optional<md::MachineModel> m_soloModel;
+		const bool m_standaloneOutputs;
+		juce::AudioBuffer<float> m_standaloneBuffer;
 		std::unique_ptr<AudioPluginAudioProcessor> m_machinedrum;
 		std::unique_ptr<AudioPluginAudioProcessor> m_monomachine;
 		maschine::Controller m_maschine;

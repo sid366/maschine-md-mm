@@ -34,11 +34,32 @@ namespace mdJucePlugin
 		}
 	}
 
+	// A single-machine product offers the machine's six outputs (main pair plus
+	// the individual outputs); the combined product mixes both machines to
+	// stereo. Plug-in hosts get three stereo buses. JUCE Standalone only opens
+	// the main bus on the audio device, so there the six outputs form one main
+	// bus: channels 1/2 main, 3/4 and 5/6 the individual outputs.
+	juce::AudioProcessor::BusesProperties CombinedProcessor::createBuses(
+		const std::optional<md::MachineModel> _soloModel, const bool _standaloneOutputs)
+	{
+		auto buses = BusesProperties()
+			.withInput("Input A/B", juce::AudioChannelSet::stereo(), true);
+		if(_soloModel && _standaloneOutputs)
+			return buses.withOutput("Outputs 1-6",
+				juce::AudioChannelSet::discreteChannels(g_standaloneOutputs), true);
+		buses = buses.withOutput("Main A/B", juce::AudioChannelSet::stereo(), true);
+		if(_soloModel)
+			buses = buses
+				.withOutput("Out C/D", juce::AudioChannelSet::stereo(), false)
+				.withOutput("Out E/F", juce::AudioChannelSet::stereo(), false);
+		return buses;
+	}
+
 	CombinedProcessor::CombinedProcessor(const std::optional<md::MachineModel> _soloModel)
-		: AudioProcessor(BusesProperties()
-			.withInput("Input A/B", juce::AudioChannelSet::stereo(), true)
-			.withOutput("Main A/B", juce::AudioChannelSet::stereo(), true))
+		: AudioProcessor(createBuses(_soloModel,
+			juce::JUCEApplicationBase::isStandaloneApp()))
 		, m_soloModel(_soloModel)
+		, m_standaloneOutputs(_soloModel && juce::JUCEApplicationBase::isStandaloneApp())
 		, m_machinedrum(createMachine(md::MachineModel::Machinedrum, _soloModel))
 		, m_monomachine(createMachine(md::MachineModel::Monomachine, _soloModel))
 		, m_maschine(m_machinedrum.get(), m_monomachine.get())
@@ -261,6 +282,18 @@ namespace mdJucePlugin
 	bool CombinedProcessor::isBusesLayoutSupported(
 		const BusesLayout& _layouts) const
 	{
+		if(m_standaloneOutputs)
+		{
+			const auto input = _layouts.getMainInputChannelSet();
+			const auto output = _layouts.getMainOutputChannelSet();
+			return _layouts.outputBuses.size() == 1
+				&& (input.isDisabled() || input == juce::AudioChannelSet::stereo())
+				&& (output == juce::AudioChannelSet::discreteChannels(g_standaloneOutputs)
+					|| output == juce::AudioChannelSet::stereo());
+		}
+		if(m_soloModel)
+			return (m_machinedrum ? m_machinedrum : m_monomachine)
+				->checkBusesLayoutSupported(_layouts);
 		return _layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo()
 			&& (_layouts.getMainInputChannelSet().isDisabled()
 				|| _layouts.getMainInputChannelSet() == juce::AudioChannelSet::stereo());
@@ -281,7 +314,27 @@ namespace mdJucePlugin
 		{
 			if(!machine)
 				continue;
-			prepareChild(*machine, _sampleRate, m_maximumBlockSize);
+			// A single machine uses the host's own layout, including any enabled
+			// individual outputs; the combined product mixes stereo children.
+			// Standalone renders all three of the machine's output pairs.
+			auto machineLayout = getBusesLayout();
+			if(m_standaloneOutputs)
+			{
+				machineLayout = machine->getBusesLayout();
+				machineLayout.inputBuses.set(0, getBusesLayout().getMainInputChannelSet().isDisabled()
+					? juce::AudioChannelSet::disabled() : juce::AudioChannelSet::stereo());
+				for(int bus = 0; bus < machineLayout.outputBuses.size(); ++bus)
+					machineLayout.outputBuses.set(bus, juce::AudioChannelSet::stereo());
+				m_standaloneBuffer.setSize(g_standaloneOutputs, m_maximumBlockSize, false, true);
+			}
+			if(!m_soloModel || !machine->setBusesLayout(machineLayout))
+				prepareChild(*machine, _sampleRate, m_maximumBlockSize);
+			else
+			{
+				machine->setRateAndBufferSizeDetails(_sampleRate, m_maximumBlockSize);
+				static_cast<juce::AudioProcessor&>(*machine).prepareToPlay(
+					_sampleRate, m_maximumBlockSize);
+			}
 			latency = std::max(latency, machine->getLatencySamples());
 		}
 		setLatencySamples(latency);
@@ -416,18 +469,46 @@ namespace mdJucePlugin
 		auto& midi = monomachine ? m_mmMidi : m_mdMidi;
 		const auto& fastBootActive = monomachine
 			? m_mmFastBootActive : m_mdFastBootActive;
-		if(!fastBootActive.load(std::memory_order_acquire))
-			static_cast<juce::AudioProcessor&>(machine).processBlock(audio, midi);
-		else
+		const auto machineChannels = std::max(machine.getTotalNumInputChannels(),
+			machine.getTotalNumOutputChannels());
+		if(fastBootActive.load(std::memory_order_acquire))
 		{
-			audio.clear();
+			_audio.clear();
 			midi.clear();
 		}
+		else if(m_standaloneOutputs
+			&& machineChannels == m_standaloneBuffer.getNumChannels())
+		{
+			// Render the machine's three output pairs, then hand the device as
+			// many of the six channels as it opened (two on a stereo device).
+			m_standaloneBuffer.setSize(g_standaloneOutputs, _samples, false, false, true);
+			m_standaloneBuffer.clear();
+			const auto inputs = std::min(machine.getTotalNumInputChannels(),
+				_audio.getNumChannels());
+			for(int channel = 0; channel < inputs; ++channel)
+				m_standaloneBuffer.copyFrom(channel, 0, _audio, channel, 0, _samples);
+			static_cast<juce::AudioProcessor&>(machine).processBlock(m_standaloneBuffer, midi);
+			_audio.clear();
+			for(int channel = 0; channel < std::min(_audio.getNumChannels(),
+				g_standaloneOutputs); ++channel)
+				_audio.copyFrom(channel, 0, m_standaloneBuffer, channel, 0, _samples);
+		}
+		else if(machineChannels == _audio.getNumChannels())
+		{
+			// The machine shares this processor's bus layout, so it renders
+			// straight into the host buffer: main output plus any enabled
+			// individual outputs.
+			static_cast<juce::AudioProcessor&>(machine).processBlock(_audio, midi);
+		}
+		else
+		{
+			// Stereo fallback, for a machine prepared without the host layout.
+			static_cast<juce::AudioProcessor&>(machine).processBlock(audio, midi);
+			_audio.clear();
+			for(int channel = 0; channel < 2; ++channel)
+				_audio.copyFrom(channel, 0, audio, channel, 0, _samples);
+		}
 		captureSysex(midi, *m_soloModel);
-
-		// Only one machine is playing, so it needs no headroom for a mix.
-		for(int channel = 0; channel < 2; ++channel)
-			_audio.copyFrom(channel, 0, audio, channel, 0, _samples);
 		_midi.clear();
 		_midi.addEvents(midi, 0, _samples, 0);
 	}
