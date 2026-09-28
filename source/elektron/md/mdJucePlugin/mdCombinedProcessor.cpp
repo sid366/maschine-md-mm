@@ -34,11 +34,12 @@ namespace mdJucePlugin
 		}
 	}
 
-	// A single-machine product offers the machine's six outputs (main pair plus
-	// the individual outputs); the combined product mixes both machines to
-	// stereo. Plug-in hosts get three stereo buses. JUCE Standalone only opens
-	// the main bus on the audio device, so there the six outputs form one main
-	// bus: channels 1/2 main, 3/4 and 5/6 the individual outputs.
+	// A single-machine product offers the machine's six outputs: the main
+	// stereo pair plus the four individual outputs A-D, which are mono as on the
+	// hardware. Plug-in hosts get a stereo main bus and four mono buses. JUCE
+	// Standalone only opens the main bus, so there the six outputs form one
+	// main bus: channels 1/2 main, 3-6 outputs A-D. The combined product mixes
+	// both machines to stereo.
 	juce::AudioProcessor::BusesProperties CombinedProcessor::createBuses(
 		const std::optional<md::MachineModel> _soloModel, const bool _standaloneOutputs)
 	{
@@ -46,12 +47,11 @@ namespace mdJucePlugin
 			.withInput("Input A/B", juce::AudioChannelSet::stereo(), true);
 		if(_soloModel && _standaloneOutputs)
 			return buses.withOutput("Outputs 1-6",
-				juce::AudioChannelSet::discreteChannels(g_standaloneOutputs), true);
-		buses = buses.withOutput("Main A/B", juce::AudioChannelSet::stereo(), true);
+				juce::AudioChannelSet::discreteChannels(g_machineOutputs), true);
+		buses = buses.withOutput("Main", juce::AudioChannelSet::stereo(), true);
 		if(_soloModel)
-			buses = buses
-				.withOutput("Out C/D", juce::AudioChannelSet::stereo(), false)
-				.withOutput("Out E/F", juce::AudioChannelSet::stereo(), false);
+			for(const auto* name : {"Out A", "Out B", "Out C", "Out D"})
+				buses = buses.withOutput(name, juce::AudioChannelSet::mono(), false);
 		return buses;
 	}
 
@@ -284,16 +284,31 @@ namespace mdJucePlugin
 	{
 		if(m_standaloneOutputs)
 		{
+			// Keep all six channels whatever the device offers. JUCE's player
+			// otherwise switches the processor to a stereo device's layout, and
+			// Standalone then never offers more than two outputs again. On a
+			// stereo device the player simply passes on the first two (main).
 			const auto input = _layouts.getMainInputChannelSet();
-			const auto output = _layouts.getMainOutputChannelSet();
 			return _layouts.outputBuses.size() == 1
 				&& (input.isDisabled() || input == juce::AudioChannelSet::stereo())
-				&& (output == juce::AudioChannelSet::discreteChannels(g_standaloneOutputs)
-					|| output == juce::AudioChannelSet::stereo());
+				&& _layouts.getMainOutputChannelSet().size() == g_machineOutputs;
 		}
 		if(m_soloModel)
-			return (m_machinedrum ? m_machinedrum : m_monomachine)
-				->checkBusesLayoutSupported(_layouts);
+		{
+			const auto input = _layouts.getMainInputChannelSet();
+			if(_layouts.inputBuses.size() != 1
+				|| !(input.isDisabled() || input == juce::AudioChannelSet::stereo())
+				|| _layouts.outputBuses.size() != 1 + g_individualOutputs
+				|| _layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
+				return false;
+			for(int bus = 1; bus < _layouts.outputBuses.size(); ++bus)
+			{
+				const auto channels = _layouts.getChannelSet(false, bus);
+				if(!channels.isDisabled() && channels != juce::AudioChannelSet::mono())
+					return false;
+			}
+			return true;
+		}
 		return _layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo()
 			&& (_layouts.getMainInputChannelSet().isDisabled()
 				|| _layouts.getMainInputChannelSet() == juce::AudioChannelSet::stereo());
@@ -314,18 +329,17 @@ namespace mdJucePlugin
 		{
 			if(!machine)
 				continue;
-			// A single machine uses the host's own layout, including any enabled
-			// individual outputs; the combined product mixes stereo children.
-			// Standalone renders all three of the machine's output pairs.
-			auto machineLayout = getBusesLayout();
-			if(m_standaloneOutputs)
+			// A single machine always renders all three of its output pairs;
+			// processSolo() hands them to this product's buses. The combined
+			// product mixes stereo children.
+			auto machineLayout = machine->getBusesLayout();
+			if(m_soloModel)
 			{
-				machineLayout = machine->getBusesLayout();
 				machineLayout.inputBuses.set(0, getBusesLayout().getMainInputChannelSet().isDisabled()
 					? juce::AudioChannelSet::disabled() : juce::AudioChannelSet::stereo());
 				for(int bus = 0; bus < machineLayout.outputBuses.size(); ++bus)
 					machineLayout.outputBuses.set(bus, juce::AudioChannelSet::stereo());
-				m_standaloneBuffer.setSize(g_standaloneOutputs, m_maximumBlockSize, false, true);
+				m_machineBuffer.setSize(g_machineOutputs, m_maximumBlockSize, false, true);
 			}
 			if(!m_soloModel || !machine->setBusesLayout(machineLayout))
 				prepareChild(*machine, _sampleRate, m_maximumBlockSize);
@@ -476,29 +490,38 @@ namespace mdJucePlugin
 			_audio.clear();
 			midi.clear();
 		}
-		else if(m_standaloneOutputs
-			&& machineChannels == m_standaloneBuffer.getNumChannels())
+		else if(machineChannels == m_machineBuffer.getNumChannels())
 		{
-			// Render the machine's three output pairs, then hand the device as
-			// many of the six channels as it opened (two on a stereo device).
-			m_standaloneBuffer.setSize(g_standaloneOutputs, _samples, false, false, true);
-			m_standaloneBuffer.clear();
+			// Render the machine's six outputs, then hand them to this product's
+			// output channels: all six in Standalone (as many as the device
+			// opened), otherwise main stereo plus any enabled mono outputs A-D.
+			m_machineBuffer.setSize(g_machineOutputs, _samples, false, false, true);
+			m_machineBuffer.clear();
 			const auto inputs = std::min(machine.getTotalNumInputChannels(),
 				_audio.getNumChannels());
 			for(int channel = 0; channel < inputs; ++channel)
-				m_standaloneBuffer.copyFrom(channel, 0, _audio, channel, 0, _samples);
-			static_cast<juce::AudioProcessor&>(machine).processBlock(m_standaloneBuffer, midi);
+				m_machineBuffer.copyFrom(channel, 0, _audio, channel, 0, _samples);
+			static_cast<juce::AudioProcessor&>(machine).processBlock(m_machineBuffer, midi);
 			_audio.clear();
-			for(int channel = 0; channel < std::min(_audio.getNumChannels(),
-				g_standaloneOutputs); ++channel)
-				_audio.copyFrom(channel, 0, m_standaloneBuffer, channel, 0, _samples);
-		}
-		else if(machineChannels == _audio.getNumChannels())
-		{
-			// The machine shares this processor's bus layout, so it renders
-			// straight into the host buffer: main output plus any enabled
-			// individual outputs.
-			static_cast<juce::AudioProcessor&>(machine).processBlock(_audio, midi);
+			if(m_standaloneOutputs)
+			{
+				for(int channel = 0; channel < std::min(_audio.getNumChannels(),
+					g_machineOutputs); ++channel)
+					_audio.copyFrom(channel, 0, m_machineBuffer, channel, 0, _samples);
+			}
+			else
+			{
+				int source = 0;
+				for(int bus = 0; bus < getBusCount(false); ++bus)
+				{
+					const auto width = bus == 0 ? 2 : 1;
+					auto busBuffer = getBusBuffer(_audio, false, bus);
+					for(int channel = 0; channel < busBuffer.getNumChannels()
+						&& channel < width; ++channel)
+						busBuffer.copyFrom(channel, 0, m_machineBuffer, source + channel, 0, _samples);
+					source += width;
+				}
+			}
 		}
 		else
 		{

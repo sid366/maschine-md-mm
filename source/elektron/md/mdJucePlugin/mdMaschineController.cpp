@@ -100,6 +100,10 @@ namespace mdJucePlugin::maschine
 			}
 		}
 
+		// A DAW can host several plug-in instances in one process. Only one of
+		// them drives the MK3 at a time; the others take over when it goes away.
+		std::atomic<const Controller*> g_hardwareOwner{nullptr};
+
 		constexpr std::array<uint8_t, 16> g_padLeds =
 		{
 			100, 101, 102, 103, 96, 97, 98, 99,
@@ -144,6 +148,9 @@ namespace mdJucePlugin::maschine
 		m_waitCondition.notify_all();
 		if(m_thread.joinable())
 			m_thread.join();
+		// The MK3 session has closed; let another instance take the hardware.
+		const Controller* self = this;
+		g_hardwareOwner.compare_exchange_strong(self, nullptr);
 	}
 
 	uint8_t Controller::selectedMonomachineTrack()
@@ -1320,6 +1327,15 @@ namespace mdJucePlugin::maschine
 
 		while(!m_stopping.load())
 		{
+			const Controller* owner = nullptr;
+			if(g_hardwareOwner.load() != this
+				&& !g_hardwareOwner.compare_exchange_strong(owner, this))
+			{
+				std::unique_lock waitLock(m_waitMutex);
+				m_waitCondition.wait_for(waitLock, 2s,
+					[this] { return m_stopping.load(); });
+				continue;
+			}
 			if(!m_client.isConnected())
 			{
 				if(!m_client.connect())
