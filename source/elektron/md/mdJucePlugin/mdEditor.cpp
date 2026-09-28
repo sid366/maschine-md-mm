@@ -52,8 +52,8 @@ namespace mdJucePlugin
 		// therefore the bright backlight and "on" the dark set pixel.
 		constexpr uint32_t g_mdLcdOff = 0xffff3d0f;
 		constexpr uint32_t g_mdLcdOn  = 0xff1a0200;
-		constexpr uint32_t g_mmLcdOff = 0xff9ad62a;
-		constexpr uint32_t g_mmLcdOn  = 0xff0a1602;
+		constexpr uint32_t g_mmLcdOff = 0xff8fcb20;
+		constexpr uint32_t g_mmLcdOn  = 0xff0c2a08;
 
 		// A skin button bound to a logical control. The packet is selected using the
 		// actual device model when the editor is created.
