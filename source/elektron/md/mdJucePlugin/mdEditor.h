@@ -78,6 +78,8 @@ namespace mdJucePlugin
 		void restorePreviousStorage();
 		bool hasStorageRecoveryImage() const;
 		void chooseUserSysexFile();
+		// Same as choosing _file in the dialog chooseUserSysexFile opens.
+		void sendUserSysexFileFrom(const juce::File& _file);
 		void cancelUserSysexTransfer();
 		bool canResumeUserSysexTransfer() const;
 		void resumeUserSysexTransfer();

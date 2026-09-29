@@ -11,6 +11,7 @@ set(SOURCES
 	mdautomation.cpp mdautomation.h
 	mdautomationsync.cpp mdautomationsync.h
 	mddevice.cpp mddevice.h
+	mddigipro.cpp mddigipro.h
 	mddsp.cpp mddsp.h
 	mdflash.cpp mdflash.h
 	mdfrontpanel.cpp mdfrontpanel.h

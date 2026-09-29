@@ -31,9 +31,15 @@ Suspects. Please report fork-specific issues here, not to the upstream projects.
   Alt/Option-drag to press and turn. With a trig held, pressing its parameter's
   encoder toggles that parameter lock. This applies to encoders A–H, not LEVEL
   or SOUND SELECTION.
-- **SysEx load and save:** use the macOS **File** menu in the combined app to
-  load files into either machine or save dumps sent by its firmware. The
-  separate MD and MM apps and plug-ins retain their right-click send menu.
+- **SysEx load and save:** use the **File** menu to load files into either
+  machine or save dumps sent by its firmware. The apps use the macOS menu bar;
+  the Maschine plug-ins show the same menu at the top of their window, with
+  **Copy Session from App** to take over what a standalone app last saved.
+- **DigiPRO banks from WAV files:** **File > Make DigiPRO Bank from WAV
+  Files...** turns up to 64 single-cycle WAV/AIFF files into a Monomachine
+  DigiPRO bank (slots in natural name order), ready to load through
+  GLOBAL > FILE > DIGIPRO MGR > RECEIVE. The format and the per-resolution
+  emphasis follow published banks (`mdLib/mddigipro.h`, `mdDigiProTest`).
 - **Panel look and feel:** adjust encoder-drag and mouse-wheel sensitivity in settings.
   An experimental crisp LCD/panel rendering option is also available.
 - **Audio inputs and outputs:** route host audio to the machine's input effects or sampling

@@ -577,6 +577,80 @@ namespace mdJucePlugin
 		stream.write(mmState.getData(), mmState.getSize());
 	}
 
+	juce::String CombinedProcessor::appSessionName(const AppSession _app)
+	{
+		switch(_app)
+		{
+		case AppSession::Machinedrum: return "Maschine MD";
+		case AppSession::Monomachine: return "Maschine MM";
+		case AppSession::Combined: break;
+		}
+		return "Maschine MD-MM";
+	}
+
+	juce::File CombinedProcessor::appSessionFile(const AppSession _app)
+	{
+		// JUCE Standalone keeps the session in <settings name>.settings. The
+		// combined app kept its pre-rename settings name.
+		const auto settingsName = _app == AppSession::Combined
+			? juce::String("Gearmulator MD-MM") : appSessionName(_app);
+		return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+			.getChildFile("Application Support").getChildFile(settingsName + ".settings");
+	}
+
+	bool CombinedProcessor::appSessionCovers(const AppSession _app) const
+	{
+		switch(_app)
+		{
+		case AppSession::Machinedrum: return m_machinedrum != nullptr;
+		case AppSession::Monomachine: return m_monomachine != nullptr;
+		case AppSession::Combined: break;
+		}
+		return true;
+	}
+
+	bool CombinedProcessor::copyAppSession(const AppSession _app, juce::String& _error)
+	{
+		const auto name = appSessionName(_app);
+		juce::String encoded;
+		if(const auto settings = juce::XmlDocument::parse(appSessionFile(_app)))
+			for(const auto* value : settings->getChildWithTagNameIterator("VALUE"))
+				if(value->getStringAttribute("name") == "filterState")
+					encoded = value->getStringAttribute("val");
+		juce::MemoryBlock state;
+		if(encoded.isEmpty() || !state.fromBase64Encoding(encoded))
+		{
+			_error = "The " + name + " app has no saved session yet. Open it and quit it, so it saves.";
+			return false;
+		}
+
+		// Check the session before replacing anything.
+		juce::MemoryInputStream stream(state, false);
+		const auto valid = static_cast<uint32_t>(stream.readInt()) == g_stateMagic
+			&& stream.readInt() == g_stateVersion;
+		(void)stream.readByte();
+		const auto mdSize = valid ? stream.readInt() : -1;
+		const auto mdFits = mdSize >= 0 && static_cast<int64_t>(mdSize) <= stream.getNumBytesRemaining();
+		if(mdFits)
+			stream.skipNextBytes(mdSize);
+		const auto mmSize = mdFits ? stream.readInt() : -1;
+		if(!mdFits || mmSize < 0 || static_cast<int64_t>(mmSize) > stream.getNumBytesRemaining())
+		{
+			_error = "The " + name + " app's session is not in a format this plug-in can read.";
+			return false;
+		}
+		const bool usable = (m_machinedrum && mdSize > 0 && _app != AppSession::Monomachine)
+			|| (m_monomachine && mmSize > 0 && _app != AppSession::Machinedrum);
+		if(!usable)
+		{
+			_error = "The " + name + " app's session has nothing for this plug-in's machines.";
+			return false;
+		}
+		setStateInformation(state.getData(), static_cast<int>(state.getSize()));
+		updateHostDisplay(ChangeDetails().withNonParameterStateChanged(true));
+		return true;
+	}
+
 	void CombinedProcessor::setStateInformation(const void* const _data,
 		const int _size)
 	{

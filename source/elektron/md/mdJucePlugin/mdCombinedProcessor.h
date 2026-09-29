@@ -34,6 +34,14 @@ namespace mdJucePlugin
 		}
 		std::optional<md::MachineModel> soloModel() const { return m_soloModel; }
 
+		// Sessions the standalone apps save when they quit. A plug-in can take one
+		// over; the app's file is only read.
+		enum class AppSession { Combined, Machinedrum, Monomachine };
+		static juce::String appSessionName(AppSession _app);
+		static juce::File appSessionFile(AppSession _app);
+		bool appSessionCovers(AppSession _app) const;
+		bool copyAppSession(AppSession _app, juce::String& _error);
+
 		struct SysexCapture
 		{
 			md::MachineModel model;

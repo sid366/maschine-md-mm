@@ -2,9 +2,12 @@
 
 #include "mdCombinedProcessor.h"
 #include "mdEditor.h"
+#include "mdLib/mddigipro.h"
 #include "mdLib/mdsysexfile.h"
 #include "jucePluginEditorLib/pluginEditorWindow.h"
 #include "jucePluginEditorLib/pluginEditorState.h"
+
+#include <juce_audio_formats/juce_audio_formats.h>
 
 #include <algorithm>
 
@@ -15,8 +18,66 @@ namespace mdJucePlugin
 		enum SysexCommand
 		{
 			SendMd = 1, SendMm, ResumeMd, ResumeMm, CancelMd, CancelMm,
-			SaveMd, SaveMm, FinishSave, CancelSave, ResetMd, ResetMm
+			SaveMd, SaveMm, FinishSave, CancelSave, ResetMd, ResetMm,
+			MakeDigiPro, CopyCombinedApp, CopyMdApp, CopyMmApp
 		};
+
+		constexpr int g_pluginMenuBarHeight = 24;
+
+		struct DigiProBank
+		{
+			std::vector<uint8_t> bytes;
+			int waves = 0;
+			juce::StringArray problems;
+		};
+
+		// One wave per file, in natural name order (MG2 before MG10), from slot 1.
+		DigiProBank buildDigiProBank(juce::Array<juce::File> _files)
+		{
+			std::sort(_files.begin(), _files.end(), [](const juce::File& _a, const juce::File& _b)
+			{
+				return _a.getFileName().compareNatural(_b.getFileName()) < 0;
+			});
+			juce::AudioFormatManager formats;
+			formats.registerBasicFormats();
+			DigiProBank bank;
+			const auto count = std::min(_files.size(), static_cast<int>(md::g_digiProSlotCount));
+			for(int slot = 0; slot < count; ++slot)
+			{
+				const auto& file = _files.getReference(slot);
+				const std::unique_ptr<juce::AudioFormatReader> reader(formats.createReaderFor(file));
+				if(!reader || reader->numChannels < 1)
+				{
+					bank.problems.add(file.getFileName() + ": not a WAV or AIFF file");
+					continue;
+				}
+				const auto length = reader->lengthInSamples;
+				if(length > static_cast<juce::int64>(md::g_digiProMaxCycleLength))
+				{
+					bank.problems.add(file.getFileName() + ": " + juce::String(length)
+						+ " samples long. DigiPRO needs a single cycle of up to "
+						+ juce::String(static_cast<int>(md::g_digiProMaxCycleLength)) + " samples");
+					continue;
+				}
+				juce::AudioBuffer<float> audio(static_cast<int>(reader->numChannels), static_cast<int>(length));
+				reader->read(&audio, 0, static_cast<int>(length), 0, true, true);
+				std::vector<float> cycle(static_cast<size_t>(length));
+				for(int channel = 0; channel < audio.getNumChannels(); ++channel)
+					for(int i = 0; i < audio.getNumSamples(); ++i)
+						cycle[static_cast<size_t>(i)] += audio.getSample(channel, i) / static_cast<float>(audio.getNumChannels());
+				const auto points = md::makeDigiProPoints(cycle);
+				if(points.empty())
+				{
+					bank.problems.add(file.getFileName() + ": silent or too short");
+					continue;
+				}
+				const auto message = md::makeDigiProMessage(static_cast<uint8_t>(slot),
+					file.getFileNameWithoutExtension().toStdString(), points);
+				bank.bytes.insert(bank.bytes.end(), message.begin(), message.end());
+				++bank.waves;
+			}
+			return bank;
+		}
 	}
 
 	struct CombinedEditor::SysexMenu final : juce::MenuBarModel
@@ -51,6 +112,28 @@ namespace mdJucePlugin
 			};
 			addMachine(false, SendMd, ResumeMd, CancelMd);
 			addMachine(true, SendMm, ResumeMm, CancelMm);
+			if(owner.hasMachine(true))
+				menu.addItem(MakeDigiPro, "Make DigiPRO Bank from WAV Files...",
+					!owner.m_waveChooserOpen);
+			if(!juce::JUCEApplicationBase::isStandaloneApp())
+			{
+				// Plug-ins can take over what the standalone apps saved.
+				juce::PopupMenu copy;
+				const auto addApp = [&](const int _id, const CombinedProcessor::AppSession _app,
+					const juce::String& _covers)
+				{
+					if(owner.m_processor.appSessionCovers(_app))
+						copy.addItem(_id, CombinedProcessor::appSessionName(_app) + " app" + _covers,
+							CombinedProcessor::appSessionFile(_app).existsAsFile());
+				};
+				const bool both = owner.hasMachine(false) && owner.hasMachine(true);
+				addApp(CopyCombinedApp, CombinedProcessor::AppSession::Combined, both ? "" : " (its "
+					+ juce::String(owner.hasMachine(true) ? "Monomachine" : "Machinedrum") + ")");
+				addApp(CopyMdApp, CombinedProcessor::AppSession::Machinedrum, both ? " (Machinedrum)" : "");
+				addApp(CopyMmApp, CombinedProcessor::AppSession::Monomachine, both ? " (Monomachine)" : "");
+				menu.addSeparator();
+				menu.addSubMenu("Copy Session from App", copy, !saving && !sending);
+			}
 			menu.addSeparator();
 			if(owner.m_processor.isSysexCapturing())
 			{
@@ -98,6 +181,10 @@ namespace mdJucePlugin
 				case CancelSave: safe->cancelSysexSave(); break;
 				case ResetMd: safe->confirmFactoryReset(false); break;
 				case ResetMm: safe->confirmFactoryReset(true); break;
+				case MakeDigiPro: safe->makeDigiProBank(); break;
+				case CopyCombinedApp: safe->confirmCopySession(static_cast<int>(CombinedProcessor::AppSession::Combined)); break;
+				case CopyMdApp: safe->confirmCopySession(static_cast<int>(CombinedProcessor::AppSession::Machinedrum)); break;
+				case CopyMmApp: safe->confirmCopySession(static_cast<int>(CombinedProcessor::AppSession::Monomachine)); break;
 				default: break;
 				}
 			});
@@ -136,8 +223,22 @@ namespace mdJucePlugin
 		m_mmNaturalHeight = hasMachine(true) ? std::max(1, mmHeight) : 0;
 		m_naturalWidth = std::max(1, std::max(m_mdNaturalWidth, m_mmNaturalWidth));
 		m_naturalHeight = std::max(1, m_mdNaturalHeight + m_mmNaturalHeight);
+
+		m_sysexMenu = std::make_unique<SysexMenu>(*this);
+		#if JUCE_MAC
+		if(juce::JUCEApplicationBase::isStandaloneApp())
+			juce::MenuBarModel::setMacMainMenu(m_sysexMenu.get());
+		else
+		#endif
+		{
+			m_menuBar = std::make_unique<juce::MenuBarComponent>(m_sysexMenu.get());
+			m_menuBarHeight = g_pluginMenuBarHeight;
+			addAndMakeVisible(*m_menuBar);
+		}
+
 		// Sizes keep the panels' aspect ratio, so the window has no empty bands
 		// and the fixed-aspect constrainer does not fight the minimum size.
+		const auto totalHeight = m_naturalHeight + m_menuBarHeight;
 		auto scale = 1.0;
 		if(const auto* display = juce::Desktop::getInstance().getDisplays()
 			.getPrimaryDisplay())
@@ -145,26 +246,20 @@ namespace mdJucePlugin
 			const auto maximum = display->userArea.reduced(24, 48);
 			scale = std::min(1.0,
 				std::min(static_cast<double>(maximum.getWidth()) / m_naturalWidth,
-					static_cast<double>(maximum.getHeight()) / m_naturalHeight));
+					static_cast<double>(maximum.getHeight()) / totalHeight));
 		}
 		scale = std::max(scale, 600.0 / m_naturalWidth);
 		m_preferredWidth = static_cast<int>(static_cast<double>(m_naturalWidth) * scale);
-		m_preferredHeight = static_cast<int>(static_cast<double>(m_naturalHeight) * scale);
-		m_sizeConstrainer.setMinimumSize(600, 600 * m_naturalHeight / m_naturalWidth);
+		m_preferredHeight = static_cast<int>(static_cast<double>(m_naturalHeight) * scale)
+			+ m_menuBarHeight;
+		m_sizeConstrainer.setMinimumSize(600, 600 * totalHeight / m_naturalWidth);
 		m_sizeConstrainer.setMaximumSize(3840,
-			3840 * m_naturalHeight / m_naturalWidth);
+			3840 * totalHeight / m_naturalWidth);
 		m_sizeConstrainer.setFixedAspectRatio(
-			static_cast<double>(m_naturalWidth) / m_naturalHeight);
+			static_cast<double>(m_naturalWidth) / totalHeight);
 		setResizable(true, true);
 		setConstrainer(&m_sizeConstrainer);
 		restorePreferredSize();
-		#if JUCE_MAC
-		if(juce::JUCEApplicationBase::isStandaloneApp())
-		{
-			m_sysexMenu = std::make_unique<SysexMenu>(*this);
-			juce::MenuBarModel::setMacMainMenu(m_sysexMenu.get());
-		}
-		#endif
 
 		// JUCE Standalone applies a 600x400 placeholder after createEditor returns.
 		// Restore the composite once the native parent exists, just like the normal
@@ -300,6 +395,119 @@ namespace mdJucePlugin
 		if(m_sysexMenu) m_sysexMenu->menuItemsChanged();
 	}
 
+	void CombinedEditor::makeDigiProBank()
+	{
+		if(m_waveChooserOpen || !hasMachine(true))
+			return;
+		m_waveChooser = std::make_unique<juce::FileChooser>(
+			"Choose single-cycle WAV or AIFF files (up to 64)",
+			juce::File::getSpecialLocation(juce::File::userHomeDirectory).getChildFile("Downloads"),
+			"*.wav;*.WAV;*.aif;*.AIF;*.aiff;*.AIFF", true);
+		m_waveChooserOpen = true;
+		juce::Component::SafePointer<CombinedEditor> safe(this);
+		m_waveChooser->launchAsync(juce::FileBrowserComponent::openMode
+			| juce::FileBrowserComponent::canSelectFiles
+			| juce::FileBrowserComponent::canSelectMultipleItems,
+			[safe](const juce::FileChooser& _chooser)
+			{
+				if(!safe) return;
+				safe->m_waveChooserOpen = false;
+				const auto files = _chooser.getResults();
+				if(files.isEmpty()) return;
+				auto bank = buildDigiProBank(files);
+				if(!bank.problems.isEmpty() || bank.waves == 0)
+				{
+					juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon,
+						"DigiPRO bank not made", "These files could not be converted:\n\n"
+							+ bank.problems.joinIntoString("\n"), "OK", safe.getComponent());
+					return;
+				}
+				const auto folder = files.getFirst().getParentDirectory();
+				const auto suggested = folder.getChildFile(folder.getFileName() + " DigiPRO.syx");
+				const auto skipped = files.size() - bank.waves;
+				juce::MessageManager::callAsync([safe, bytes = std::move(bank.bytes), waves = bank.waves,
+					suggested, skipped]() mutable
+				{
+					if(!safe) return;
+					if(skipped > 0)
+						juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, "Only 64 waves fit",
+							"The Monomachine has 64 DigiPRO slots, so only the first 64 files by name are used.",
+							"OK", safe.getComponent());
+					safe->saveDigiProBank(std::move(bytes), waves, suggested);
+				});
+			});
+	}
+
+	void CombinedEditor::saveDigiProBank(std::vector<uint8_t> _bank, const int _waves,
+		const juce::File& _suggested)
+	{
+		m_bankSaveChooser = std::make_unique<juce::FileChooser>("Save DigiPRO bank",
+			_suggested, "*.syx", true);
+		m_waveChooserOpen = true;
+		juce::Component::SafePointer<CombinedEditor> safe(this);
+		m_bankSaveChooser->launchAsync(juce::FileBrowserComponent::saveMode
+			| juce::FileBrowserComponent::canSelectFiles
+			| juce::FileBrowserComponent::warnAboutOverwriting,
+			[safe, bank = std::move(_bank), _waves](const juce::FileChooser& _chooser)
+			{
+				if(!safe) return;
+				safe->m_waveChooserOpen = false;
+				auto file = _chooser.getResult();
+				if(file == juce::File()) return;
+				if(!file.hasFileExtension("syx"))
+					file = file.withFileExtension("syx");
+				if(!file.replaceWithData(bank.data(), bank.size()))
+				{
+					juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon,
+						"DigiPRO bank not saved", "The file could not be written:\n" + file.getFullPathName(),
+						"OK", safe.getComponent());
+					return;
+				}
+				const juce::String text = juce::String(_waves) + (_waves == 1 ? " wave" : " waves")
+					+ " saved to\n" + file.getFullPathName() + "\n\nLoading the bank puts them in DigiPRO slots 1-"
+					+ juce::String(_waves) + ", replacing the waves in those slots.";
+				juce::AlertWindow::showOkCancelBox(juce::AlertWindow::InfoIcon, "DigiPRO bank saved",
+					text + "\n\nLoad it into the Monomachine now?", "Load Now", "Later", safe.getComponent(),
+					juce::ModalCallbackFunction::create([safe, file](const int _result)
+					{
+						if(!safe || _result != 1) return;
+						if(auto* const mm = safe->editorFor(true))
+							mm->sendUserSysexFileFrom(file);
+					}));
+			});
+	}
+
+	void CombinedEditor::confirmCopySession(const int _app)
+	{
+		const auto app = static_cast<CombinedProcessor::AppSession>(_app);
+		if(m_factoryResetPending || m_processor.isSysexCapturing() || m_sysexSaveChooserOpen
+			|| (editorFor(false) && editorFor(false)->isUserSysexTransferActive())
+			|| (editorFor(true) && editorFor(true)->isUserSysexTransferActive()))
+			return;
+		const auto name = CombinedProcessor::appSessionName(app);
+		juce::StringArray machines;
+		if(hasMachine(false) && app != CombinedProcessor::AppSession::Monomachine)
+			machines.add("Machinedrum");
+		if(hasMachine(true) && app != CombinedProcessor::AppSession::Machinedrum)
+			machines.add("Monomachine");
+		const auto what = machines.joinIntoString(" and ");
+		juce::Component::SafePointer<CombinedEditor> safe(this);
+		juce::AlertWindow::showOkCancelBox(juce::AlertWindow::QuestionIcon,
+			"Copy the " + name + " app's session?",
+			"Replace this plug-in's " + what + " patterns, kits, songs, sounds"
+				+ (machines.contains("Monomachine") ? ", DigiPRO waves" : "")
+				+ " and global settings with the session the " + name + " app last saved?\n\n"
+				"The app saves its session when you quit it. The app's files are only read, never changed.",
+			"Copy", "Cancel", this, juce::ModalCallbackFunction::create([safe, app](const int _result)
+			{
+				if(!safe || _result != 1) return;
+				juce::String error;
+				if(!safe->m_processor.copyAppSession(app, error))
+					juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon,
+						"Session not copied", error, "OK", safe.getComponent());
+			}));
+	}
+
 	void CombinedEditor::mouseDown(const juce::MouseEvent& _event)
 	{
 		if(m_mmEditor && (_event.eventComponent == m_mmEditor.get()
@@ -317,9 +525,12 @@ namespace mdJucePlugin
 
 	void CombinedEditor::resized()
 	{
+		if(m_menuBar)
+			m_menuBar->setBounds(0, 0, getWidth(), m_menuBarHeight);
+		const auto panelsHeight = std::max(1, getHeight() - m_menuBarHeight);
 		const auto scale = std::min(
 			static_cast<double>(getWidth()) / m_naturalWidth,
-			static_cast<double>(getHeight()) / m_naturalHeight);
+			static_cast<double>(panelsHeight) / m_naturalHeight);
 		const auto mdWidth = m_mdEditor ? std::max(1,
 			static_cast<int>(m_mdNaturalWidth * scale)) : 0;
 		const auto mdHeight = m_mdEditor ? std::max(1,
@@ -329,7 +540,7 @@ namespace mdJucePlugin
 		const auto mmHeight = m_mmEditor ? std::max(1,
 			static_cast<int>(m_mmNaturalHeight * scale)) : 0;
 		const auto contentHeight = mdHeight + mmHeight;
-		const auto top = (getHeight() - contentHeight) / 2;
+		const auto top = m_menuBarHeight + (panelsHeight - contentHeight) / 2;
 		if(m_mdEditor)
 			m_mdEditor->setBounds((getWidth() - mdWidth) / 2, top,
 				mdWidth, mdHeight);

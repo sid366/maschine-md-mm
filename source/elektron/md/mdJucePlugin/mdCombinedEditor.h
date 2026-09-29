@@ -29,14 +29,23 @@ namespace mdJucePlugin
 		void startSysexSave(bool _monomachine);
 		void finishSysexSave();
 		void cancelSysexSave();
+		void makeDigiProBank();
+		void saveDigiProBank(std::vector<uint8_t> _bank, int _waves, const juce::File& _suggested);
+		void confirmCopySession(int _app);
 		void timerCallback() override;
 		void restorePreferredSize();
 		void fixParentWindowSize() const;
 
 		CombinedProcessor& m_processor;
 		std::unique_ptr<SysexMenu> m_sysexMenu;
+		// Plug-ins cannot use the macOS menu bar, so they get this one.
+		std::unique_ptr<juce::MenuBarComponent> m_menuBar;
+		int m_menuBarHeight = 0;
 		std::unique_ptr<juce::FileChooser> m_sysexSaveChooser;
+		std::unique_ptr<juce::FileChooser> m_waveChooser;
+		std::unique_ptr<juce::FileChooser> m_bankSaveChooser;
 		bool m_sysexSaveChooserOpen = false;
+		bool m_waveChooserOpen = false;
 		bool m_factoryResetPending = false;
 		juce::File m_sysexSaveFile;
 		std::unique_ptr<juce::AudioProcessorEditor> m_mdEditor;

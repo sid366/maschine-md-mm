@@ -110,6 +110,12 @@ if(BUILD_TESTING)
 	set_tests_properties(mdLibTests PROPERTIES FIXTURES_REQUIRED "Mc68kCore;MdTimedHostRx;MdIdleSelfBranch;MdUart;MdMidiTiming")
 endif()
 
+add_executable(mdDigiProTest digiproTest.cpp)
+target_link_libraries(mdDigiProTest PRIVATE mdLib)
+set_property(TARGET mdDigiProTest PROPERTY FOLDER "Elektron/test")
+add_test(NAME mdDigiProTest COMMAND mdDigiProTest)
+set_tests_properties(mdDigiProTest PROPERTIES LABELS "UnitTest" TIMEOUT 30)
+
 add_executable(mmSysexWorkflowTest mmSysexWorkflowTest.cpp)
 target_link_libraries(mmSysexWorkflowTest PRIVATE mdLib)
 if(MSVC)
