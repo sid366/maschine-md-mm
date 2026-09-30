@@ -12,7 +12,7 @@ namespace mdJucePlugin::maschine
 	{
 		// The accent/swing/slide editors show their steps for as long as they
 		// are open, in a colour that is not a trig's.
-		if(mdStepEditor(panel) != MdStepEditor::None)
+		if(stepEditor(panel, md::MachineModel::Machinedrum) != StepEditor::None)
 			return panel.getStepLed(step) ? nihia::LedColor::Blue : nihia::LedColor::Off;
 		// In normal MD playback the native step lamps are cursor/activity,
 		// not an occupied-step map. Do not turn them into a pad playhead.
@@ -42,5 +42,15 @@ namespace mdJucePlugin::maschine
 		if(native == Native::Green) return Pad::Yellow;
 		if(gridRecording && native == Native::Red) return Pad::Yellow;
 		return recording ? Pad::Red : Pad::White;
+	}
+
+	// MM arpeggiator/swing/slide editors: green marks a set step (red an arp
+	// step that is off, yellow the running cursor). Set steps show in blue.
+	inline nihia::LedColor monomachineEditorPadColor(const md::FrontPanel::LedColor native)
+	{
+		using Native = md::FrontPanel::LedColor;
+		if(native == Native::Green) return nihia::LedColor::Blue;
+		if(native == Native::Yellow) return nihia::LedColor::Red;
+		return nihia::LedColor::Off;
 	}
 }

@@ -1163,8 +1163,8 @@ namespace mdJucePlugin::maschine
 
 		active(24, padMode, nihia::LedColor::Yellow);
 
-		const bool mdStepEditorShown = focused == md::MachineModel::Machinedrum
-			&& mdStepEditor(_mdPanel) != MdStepEditor::None;
+		const bool stepEditorShown = stepEditor(focused == md::MachineModel::Machinedrum
+			? _mdPanel : _mmPanel, focused) != StepEditor::None;
 
 		for(size_t i = 0; i < pads.size(); ++i)
 		{
@@ -1245,8 +1245,9 @@ namespace mdJucePlugin::maschine
 			}
 			else if(focused == md::MachineModel::Monomachine)
 			{
-				const auto stepColor = monomachinePadColor(
-					_mmPanel.getMonomachineStepLedColor(i), _mmRecording, _mmGridRecording);
+				const auto native = _mmPanel.getMonomachineStepLedColor(i);
+				const auto stepColor = stepEditorShown ? monomachineEditorPadColor(native)
+					: monomachinePadColor(native, _mmRecording, _mmGridRecording);
 				lit = stepColor != nihia::LedColor::Off;
 				if(lit) color = stepColor;
 			}
@@ -1273,7 +1274,7 @@ namespace mdJucePlugin::maschine
 			// Functional feedback always takes precedence, including the entire
 			// mute/track/bank views (where an unlit pad also conveys information).
 			if(randomLights && !muteMode && !padMode && !patternBankHeld
-				&& !pads[i] && !lit && !mdStepEditorShown)
+				&& !pads[i] && !lit && !stepEditorShown)
 				animateLight(g_padLeds[i], static_cast<uint8_t>(i), 16);
 		}
 		return result;

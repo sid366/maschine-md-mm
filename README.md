@@ -100,7 +100,7 @@ refer to the eight buttons above the screens, counted from left to right.
 | Dedicated `<` / `>` buttons | Browse edit pages backward / forward. |
 | PAD MODE + pad | Select MD track 1–16 or MM track 1–6. |
 | MUTE + pad | Toggle mute for MD track 1–16 or MM track 1–6. |
-| Pad 1–16 | Press the corresponding trig/step; when a pattern bank is held, select that pattern slot. In the Machinedrum's ACCENT, SWING and SLIDE editors (**SHIFT + B/C/D**) the pads show that editor's steps in blue until you leave it. |
+| Pad 1–16 | Press the corresponding trig/step; when a pattern bank is held, select that pattern slot. In the step editors (Machinedrum ACCENT, SWING, SLIDE: **SHIFT + B/C/D**; Monomachine ARPEGGIATOR, SWING, SLIDE: **SHIFT + A/C/D**) the pads show that editor's steps in blue until you leave it. |
 | Group A–H + pad | Select a pattern in bank A–H. A–D and E–H also switch the instrument's bank group as needed. |
 | SHIFT | Hold the instrument's FUNCTION key for its firmware shortcuts. |
 | PLAY / STOP | Start / stop **both** instruments together. |
