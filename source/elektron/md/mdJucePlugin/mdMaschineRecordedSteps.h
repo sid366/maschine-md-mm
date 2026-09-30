@@ -2,6 +2,7 @@
 
 #include "mdLib/mdfrontpanel.h"
 #include "mdMaschineNihiaProtocol.h"
+#include "mdMaschineStepEditor.h"
 
 namespace mdJucePlugin::maschine
 {
@@ -9,6 +10,10 @@ namespace mdJucePlugin::maschine
 		const unsigned step, const bool recording, const bool playing,
 		const bool gridRecording, const unsigned selectedPage)
 	{
+		// The accent/swing/slide editors show their steps for as long as they
+		// are open, in a colour that is not a trig's.
+		if(mdStepEditor(panel) != MdStepEditor::None)
+			return panel.getStepLed(step) ? nihia::LedColor::Blue : nihia::LedColor::Off;
 		// In normal MD playback the native step lamps are cursor/activity,
 		// not an occupied-step map. Do not turn them into a pad playhead.
 		if(!recording) return nihia::LedColor::Off;

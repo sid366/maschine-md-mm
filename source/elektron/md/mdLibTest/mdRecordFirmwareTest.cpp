@@ -109,6 +109,67 @@ int main(const int _argc, const char* const* const _argv)
 			std::cout << "PASS: pattern copy/clear/paste restores recorded triggers\n";
 			return 0;
 		}
+		if(_argc >= 3 && std::string_view(_argv[2]) == "--md-step-editors")
+		{
+			require(model == md::MachineModel::Machinedrum, "step editor fixture requires MD");
+			using mdJucePlugin::maschine::MdStepEditor;
+			using Pad = mdJucePlugin::maschine::nihia::LedColor;
+			const auto key = [&](md::PanelControl control, bool down, unsigned milliseconds) {
+				const auto packet = md::panelPacket(model, control).value();
+				const auto event = down ? rows.press(packet) : rows.release(packet);
+				require(hardware.trySendPanelEvent(event.row, event.mask), "editor input rejected");
+				advance(hardware, md::g_samplerate * milliseconds / 1000);
+			};
+			const auto tap = [&](md::PanelControl control) { key(control,true,100); key(control,false,100); };
+			const auto chord = [&](md::PanelControl control) {
+				key(md::PanelControl::Function,true,33);
+				key(control,true,66); key(control,false,33);
+				key(md::PanelControl::Function,false,100);
+			};
+			// In an editor the pads show its steps in blue, whatever the record
+			// state; returns how many are lit.
+			const auto expectEditor = [&](const MdStepEditor editor, const char* message) {
+				const auto panel = hardware.getFrontPanelSnapshot();
+				require(mdJucePlugin::maschine::mdStepEditor(panel) == editor, message);
+				unsigned lit = 0;
+				for(unsigned step = 0; editor != MdStepEditor::None && step < 16; ++step)
+				{
+					const auto color = mdJucePlugin::maschine::machinedrumPadColor(panel, step, false, false, false, 0);
+					require(color == (panel.getStepLed(step) ? Pad::Blue : Pad::Off),
+						"editor pad does not mirror its step");
+					lit += panel.getStepLed(step) ? 1u : 0u;
+				}
+				return lit;
+			};
+			tap(md::PanelControl::Record);
+			tap(md::PanelControl::Trigger5);
+			tap(md::PanelControl::Trigger9);
+			expectEditor(MdStepEditor::None, "grid recording taken for an editor");
+			chord(md::PanelControl::BankB);
+			const auto accents = expectEditor(MdStepEditor::Accent, "FUNCTION+B did not open ACCENT");
+			require(accents > 0, "ACCENT shows no steps");
+			advance(hardware, md::g_samplerate * 2);
+			require(!recordLed(hardware, model), "RECORD lamp lit in the ACCENT editor");
+			require(expectEditor(MdStepEditor::Accent, "ACCENT closed by itself") == accents,
+				"ACCENT steps did not persist");
+			tap(md::PanelControl::Trigger5);
+			require(expectEditor(MdStepEditor::Accent, "trig closed ACCENT") != accents,
+				"trig did not toggle an accent");
+			chord(md::PanelControl::BankB);
+			expectEditor(MdStepEditor::None, "FUNCTION+B did not close ACCENT");
+			chord(md::PanelControl::BankC);
+			require(expectEditor(MdStepEditor::Swing, "FUNCTION+C did not open SWING") > 0,
+				"SWING shows no steps");
+			tap(md::PanelControl::Exit);
+			expectEditor(MdStepEditor::None, "EXIT did not close SWING");
+			chord(md::PanelControl::BankD);
+			expectEditor(MdStepEditor::Slide, "FUNCTION+D did not open SLIDE");
+			tap(md::PanelControl::Exit);
+			expectEditor(MdStepEditor::None, "EXIT did not close SLIDE");
+			require(recordLed(hardware, model), "editors did not return to grid recording");
+			std::cout << "PASS: accent/swing/slide editors show their steps on the pads\n";
+			return 0;
+		}
 		if(_argc >= 3 && std::string_view(_argv[2]) == "--clear-track")
 		{
 			require(model == md::MachineModel::Monomachine, "MM clear fixture requires MM");

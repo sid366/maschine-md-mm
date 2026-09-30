@@ -1163,6 +1163,8 @@ namespace mdJucePlugin::maschine
 
 		active(24, padMode, nihia::LedColor::Yellow);
 
+		const bool mdStepEditorShown = focused == md::MachineModel::Machinedrum
+			&& mdStepEditor(_mdPanel) != MdStepEditor::None;
 
 		for(size_t i = 0; i < pads.size(); ++i)
 		{
@@ -1271,7 +1273,7 @@ namespace mdJucePlugin::maschine
 			// Functional feedback always takes precedence, including the entire
 			// mute/track/bank views (where an unlit pad also conveys information).
 			if(randomLights && !muteMode && !padMode && !patternBankHeld
-				&& !pads[i] && !lit)
+				&& !pads[i] && !lit && !mdStepEditorShown)
 				animateLight(g_padLeds[i], static_cast<uint8_t>(i), 16);
 		}
 		return result;

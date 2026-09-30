@@ -255,7 +255,8 @@ target_link_libraries(mdRecordFirmwareTest PRIVATE mdLib)
 add_test(NAME mdRecordFirmwareTest COMMAND mdRecordFirmwareTest md)
 add_test(NAME mdPadCursorFirmwareTest COMMAND mdRecordFirmwareTest md --md-pad-cursor)
 add_test(NAME mdPadCursor64FirmwareTest COMMAND mdRecordFirmwareTest md --md-pad-cursor 64)
-set_tests_properties(mdPadCursorFirmwareTest mdPadCursor64FirmwareTest PROPERTIES
+add_test(NAME mdStepEditorFirmwareTest COMMAND mdRecordFirmwareTest md --md-step-editors)
+set_tests_properties(mdPadCursorFirmwareTest mdPadCursor64FirmwareTest mdStepEditorFirmwareTest PROPERTIES
 	LABELS "Integration;FirmwareTest;Maschine" SKIP_RETURN_CODE 77 TIMEOUT 120)
 add_test(NAME mdLcdDrumFirmwareTest COMMAND mdRecordFirmwareTest md --drums)
 set_tests_properties(mdLcdDrumFirmwareTest PROPERTIES
