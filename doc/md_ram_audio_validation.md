@@ -209,6 +209,23 @@ timing, and dual-3D addressing. Only the previously lost 24-bit target-address
 mask was restored here. The other items should be tracked and tested separately
 rather than folded into this audio fix.
 
+## Follow-up findings (2026-10-01)
+
+`mdUwFirmwareTest` now also covers:
+
+- **Input monitoring.** With RAM-R1 on track 1, `ILEV` at unity and `IBAL` on
+  Input A, `CUE1`/`CUE2` at 0 keep the input off the main outputs; at 127 the
+  main outputs carry Input A (correlation 0.995, Input B 0.05). The monitored
+  signal is polarity-inverted, which is inaudible.
+- **Main-mix resampling (known issue).** While RAM-P1 plays a clean recording
+  (main output correlation 0.99), RAM-R2 with `MLEV` at unity and `ILEV` off
+  records the main mix. RAM-P2 plays it back with the right level, but the
+  waveform is damaged: runs of the correct slope alternate with near-flat
+  sections and jumps, as if DSP2 sometimes takes the wrong serial slot of the
+  DSP1->DSP2 main-mix link. External-input recording through the same RAM is
+  clean. The test reports this and fails only when
+  `MD_EXPECT_CLEAN_RESAMPLING` is set, for use while fixing the link.
+
 ## Recommended hardware smoke matrix
 
 Before calling the behavior fully hardware-validated, run at least the following

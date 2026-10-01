@@ -90,6 +90,9 @@ namespace mdJucePlugin
 			return buses.withOutput("Outputs 1-" + juce::String(channels),
 				juce::AudioChannelSet::discreteChannels(channels), true);
 		}
+		// DAWs such as Live feed an instrument's audio only into a sidechain
+		// (aux) input. It goes to the machines' Input A/B with the main input.
+		buses = buses.withInput("Sidechain", juce::AudioChannelSet::stereo(), false);
 		for(size_t slot = 0; slot < slots.size(); ++slot)
 			buses = buses.withOutput(slots[slot].name, slots[slot].width == 2
 				? juce::AudioChannelSet::stereo() : juce::AudioChannelSet::mono(),
@@ -326,10 +329,14 @@ namespace mdJucePlugin
 	bool CombinedProcessor::isBusesLayoutSupported(
 		const BusesLayout& _layouts) const
 	{
-		const auto input = _layouts.getMainInputChannelSet();
-		if(_layouts.inputBuses.size() != 1
-			|| !(input.isDisabled() || input == juce::AudioChannelSet::stereo()))
+		if(_layouts.inputBuses.size() != (m_standaloneOutputs ? 1 : 2))
 			return false;
+		for(int bus = 0; bus < _layouts.inputBuses.size(); ++bus)
+		{
+			const auto input = _layouts.getChannelSet(true, bus);
+			if(!(input.isDisabled() || input == juce::AudioChannelSet::stereo()))
+				return false;
+		}
 		if(m_standaloneOutputs)
 		{
 			// Keep every output channel whatever the device offers. JUCE's player
@@ -368,7 +375,7 @@ namespace mdJucePlugin
 			// Every machine renders all three of its output pairs; processBlock()
 			// hands them to this product's outputs.
 			auto machineLayout = machine->getBusesLayout();
-			machineLayout.inputBuses.set(0, getBusesLayout().getMainInputChannelSet().isDisabled()
+			machineLayout.inputBuses.set(0, getTotalNumInputChannels() == 0
 				? juce::AudioChannelSet::disabled() : juce::AudioChannelSet::stereo());
 			for(int bus = 0; bus < machineLayout.outputBuses.size(); ++bus)
 				machineLayout.outputBuses.set(bus, juce::AudioChannelSet::stereo());
@@ -421,7 +428,8 @@ namespace mdJucePlugin
 			return;
 		}
 
-		// Each machine gets the host input and renders into its own buffer.
+		// Each machine gets the host input (main plus sidechain) and renders into
+		// its own buffer.
 		const auto prepareMachineBuffer = [&](juce::AudioBuffer<float>& _buffer,
 			const AudioPluginAudioProcessor* const _machine)
 		{
@@ -430,10 +438,14 @@ namespace mdJucePlugin
 			_buffer.setSize(std::max(_machine->getTotalNumInputChannels(),
 				_machine->getTotalNumOutputChannels()), samples, false, false, true);
 			_buffer.clear();
-			const auto inputs = std::min(_machine->getTotalNumInputChannels(),
-				_audio.getNumChannels());
-			for(int channel = 0; channel < inputs; ++channel)
-				_buffer.copyFrom(channel, 0, _audio, channel, 0, samples);
+			for(int bus = 0; bus < getBusCount(true); ++bus)
+			{
+				const auto input = getBusBuffer(_audio, true, bus);
+				const auto channels = std::min(_machine->getTotalNumInputChannels(),
+					input.getNumChannels());
+				for(int channel = 0; channel < channels; ++channel)
+					_buffer.addFrom(channel, 0, input, channel, 0, samples);
+			}
 		};
 		prepareMachineBuffer(m_mdAudio, m_machinedrum.get());
 		prepareMachineBuffer(m_mmAudio, m_monomachine.get());

@@ -51,6 +51,9 @@ Suspects. Please report fork-specific issues here, not to the upstream projects.
     *MD Main A/B*, *MD Out A*–*F*, *MM Main A/B*, *MM Out A*–*F*. The standalone
     app puts the mix on device channels 1/2, MD A–F on 3–8 and MM A–F on 9–14.
   With a stereo device the standalone apps play the main output.
+  The Maschine plug-ins also have a **Sidechain** input (for hosts such as Live that
+  only send audio to instruments that way); it reaches the machines' Input A/B together
+  with the main input.
 
 ## Single-machine apps (Maschine MD / Maschine MM)
 
