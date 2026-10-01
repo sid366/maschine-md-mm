@@ -81,11 +81,26 @@ juce_add_binary_data(mdmmJucePlugin_BinaryData SOURCES
 	"tus_settings_gui_Monomachine.rml" "tus_settings_dspaudio_Monomachine.rml"
 	${MD_SKIN_ASSETS} ${MM_SKIN_ASSETS})
 
+# A side-by-side test build: the Maschine products get their own names, plug-in
+# codes and saved sessions, so they can be installed next to the regular ones.
+option(MDMM_SAMPLE_VARIANT "Build the Maschine products as separate '... Sample' products" OFF)
+if(MDMM_SAMPLE_VARIANT)
+	set(MDMM_NAME_SUFFIX " Sample")
+	set(MDMM_CODE_COMBINED "Tsdm")
+	set(MDMM_CODE_MD "Tsmd")
+	set(MDMM_CODE_MM "Tsmm")
+else()
+	set(MDMM_NAME_SUFFIX "")
+	set(MDMM_CODE_COMBINED "Tmdm")
+	set(MDMM_CODE_MD "Tmds")
+	set(MDMM_CODE_MM "Tmms")
+endif()
+
 createJucePlugin(mdJucePlugin "Gearmulator MD" TRUE "Tmdr" mdJucePlugin_BinaryData mdLib)
 createJucePlugin(mmJucePlugin "Gearmulator MM" TRUE "Tmno" mmJucePlugin_BinaryData mdLib)
-createJucePlugin(mdmmJucePlugin "Maschine MD-MM" TRUE "Tmdm" mdmmJucePlugin_BinaryData mdLib)
+createJucePlugin(mdmmJucePlugin "Maschine MD-MM${MDMM_NAME_SUFFIX}" TRUE "${MDMM_CODE_COMBINED}" mdmmJucePlugin_BinaryData mdLib)
 # Retain the existing audio-device/settings file across the product rename.
-if(TARGET mdmmJucePlugin_Standalone)
+if(TARGET mdmmJucePlugin_Standalone AND NOT MDMM_SAMPLE_VARIANT)
 	target_compile_definitions(mdmmJucePlugin_Standalone PRIVATE
 		JUCE_STANDALONE_SETTINGS_NAME="Gearmulator MD-MM")
 endif()
@@ -96,8 +111,8 @@ target_compile_definitions(mdmmJucePlugin PRIVATE
 # Single-machine variants of the combined app: the same Maschine MK3
 # integration, but only one emulation runs, for lower CPU and memory use.
 # They share firmware, storage and settings folders with the other products.
-createJucePlugin(mdSoloJucePlugin "Maschine MD" TRUE "Tmds" mdJucePlugin_BinaryData mdLib)
-createJucePlugin(mmSoloJucePlugin "Maschine MM" TRUE "Tmms" mmJucePlugin_BinaryData mdLib)
+createJucePlugin(mdSoloJucePlugin "Maschine MD${MDMM_NAME_SUFFIX}" TRUE "${MDMM_CODE_MD}" mdJucePlugin_BinaryData mdLib)
+createJucePlugin(mmSoloJucePlugin "Maschine MM${MDMM_NAME_SUFFIX}" TRUE "${MDMM_CODE_MM}" mmJucePlugin_BinaryData mdLib)
 target_compile_definitions(mdSoloJucePlugin PRIVATE
 	MD_JUCEPLUGIN_COMBINED=1
 	MD_JUCEPLUGIN_SOLO_MACHINEDRUM=1

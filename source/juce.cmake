@@ -150,7 +150,7 @@ macro(createJucePlugin targetName productName isSynth plugin4CC binaryDataProjec
 	if("${targetName}" MATCHES "^(md|mm|mdmm|mdSolo|mmSolo)JucePlugin$")
 		set(productWebsite "https://github.com/mo0kid/maschine-md-mm")
 	endif()
-	if("${targetName}" STREQUAL "mdmmJucePlugin")
+	if("${targetName}" STREQUAL "mdmmJucePlugin" AND NOT MDMM_SAMPLE_VARIANT)
 		set(productBundleIdentifier "local.gearmulator.preview.GearmulatorMD-MM")
 	endif()
 	juce_add_plugin(${targetName}

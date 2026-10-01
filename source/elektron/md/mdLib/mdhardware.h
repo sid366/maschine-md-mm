@@ -193,6 +193,12 @@ namespace md
 			uint64_t _clampCycle, bool _workComplete) noexcept;
 		void recordMdLinkPurge(size_t _purgedFrames) noexcept;
 
+		// Machinedrum DSP2 is about to sample the DSP1->DSP2 link and nothing is
+		// queued: it has run ahead of DSP1. Bring DSP1 to DSP2's time first, so the
+		// words DSP1 sends up to now (the main mix travels this way in bursts)
+		// arrive in order instead of piling up behind DSP2 and being purged.
+		void catchUpMixerToProducer();
+
 		// Mark the start of a Machinedrum DMA receive window. No-op for MM.
 		void mdLinkWindowFlushed();
 

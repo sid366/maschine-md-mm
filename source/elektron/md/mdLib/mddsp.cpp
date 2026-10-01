@@ -57,7 +57,10 @@ namespace md
 		{
 			m_periphX.getEssi0().setRxDataAvailableCallback([this]
 			{
-				return !m_periphX.getEssi0().getAudioInputs().empty();
+				auto& ring = m_periphX.getEssi0().getAudioInputs();
+				if(ring.empty() && m_index == 1)
+					m_hardware.catchUpMixerToProducer();
+				return !ring.empty();
 			});
 
 			// An RX0 read with DMA4 disabled flushes staged link data. DMA reads

@@ -217,14 +217,24 @@ rather than folded into this audio fix.
   Input A, `CUE1`/`CUE2` at 0 keep the input off the main outputs; at 127 the
   main outputs carry Input A (correlation 0.995, Input B 0.05). The monitored
   signal is polarity-inverted, which is inaudible.
-- **Main-mix resampling (known issue).** While RAM-P1 plays a clean recording
-  (main output correlation 0.99), RAM-R2 with `MLEV` at unity and `ILEV` off
-  records the main mix. RAM-P2 plays it back with the right level, but the
-  waveform is damaged: runs of the correct slope alternate with near-flat
-  sections and jumps, as if DSP2 sometimes takes the wrong serial slot of the
-  DSP1->DSP2 main-mix link. External-input recording through the same RAM is
-  clean. The test reports this and fails only when
-  `MD_EXPECT_CLEAN_RESAMPLING` is set, for use while fixing the link.
+- **Main-mix resampling.** While RAM-P1 plays a clean recording, RAM-R2 with
+  `MLEV` at unity and `ILEV` off records the main mix; played back from the same
+  track settings it must match the original waveform (it arrives inverted, like
+  the CUE path, which is inaudible).
+
+  This used to fail. DSP1 sends the main mix to DSP2 in bursts over ESSI0: once
+  per 32-frame block it transmits the block's 64 words back to back, then
+  repeats its last word for the rest of the block (24 link words per codec
+  frame). DSP2 captures the burst with a 64-word DMA window. The scheduler let
+  DSP2 run up to ~5.5 frames ahead of DSP1, so a burst could land in DSP2's past;
+  by DSP2's next link read the ring was deeper than 16 words and the MD purge
+  discarded it, burst included (697 purges, ~72k lost words per 16,384 frames).
+  The recording then held stale and retransmitted words. Now, when DSP2 finds
+  the link empty it first catches DSP1 up to its own time
+  (`Hardware::catchUpMixerToProducer`), the mirror of the catch-up DSP2's own
+  transmissions already perform. With it every word arrives in order (maximum
+  depth 5, no purges), the captured main mix correlates 0.98 with the saw and
+  the resampled take 0.97.
 
 ## Recommended hardware smoke matrix
 

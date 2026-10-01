@@ -1,3 +1,4 @@
+#include <atomic>
 #include "mdLib/mddevice.h"
 #include "mdLib/mdhardware.h"
 #include "mdLib/mdpanel.h"
@@ -558,11 +559,9 @@ namespace
 		};
 		const auto p1 = key(md::PanelControl::Trigger2);
 		const auto r2 = key(md::PanelControl::Trigger3);
-		const auto p2 = key(md::PanelControl::Trigger4);
-		if(!p1 || !r2 || !p2 || p1->row != r2->row)
+		if(!p1 || !r2 || p1->row != r2->row)
 			return fail("triggers 2-4 have no usable panel mapping");
 		assignUwMachine(hardware, 2, 33); // RAM-R2
-		assignUwMachine(hardware, 3, 35); // RAM-P2
 		setTrackParameter(hardware, 2, 0, 64);  // MLEV unity
 		setTrackParameter(hardware, 2, 1, 64);  // MBAL centred
 		setTrackParameter(hardware, 2, 2, 0);   // ILEV off: main mix only
@@ -575,9 +574,13 @@ namespace
 		const auto recording = renderWithInput(hardware, captureFrames, false);
 		hardware.sendPanelEvent(p1->row, 0);
 		advance(hardware, 4096);
-		hardware.sendPanelEvent(p2->row, p2->mask);
+		// Play it back on track 2, whose sound settings already played RAM-R1's
+		// take cleanly, so only the recording differs.
+		assignUwMachine(hardware, 1, 35); // track 2: RAM-P2
+		advance(hardware, md::g_samplerate / 2);
+		hardware.sendPanelEvent(p1->row, p1->mask);
 		std::array<std::vector<float>, 2> playback = renderWithInput(hardware, captureFrames / 2, false);
-		hardware.sendPanelEvent(p2->row, 0);
+		hardware.sendPanelEvent(p1->row, 0);
 		const auto tail = renderWithInput(hardware, captureFrames / 2, false);
 		for(size_t c = 0; c < 2; ++c)
 			playback[c].insert(playback[c].end(), tail[c].begin(), tail[c].end());
@@ -589,12 +592,11 @@ namespace
 		std::cout << "Resampling: RAM-P2 playback of the RAM-R2 main-mix take, peak=" << peak << '\n';
 		if(peak < 0.001f)
 			return fail("RAM-P2 played nothing after RAM-R2 recorded the main mix");
-		// Known issue: the main mix reaches RAM-R2 damaged (segments from the wrong
-		// serial slot), while external-input recording is clean. Reported, and
-		// enforced only on request until the DSP1->DSP2 link is fixed.
-		const bool clean = recordedWaveformMatches(playback, 151, 97);
-		std::cout << "Resampling waveform preserved: " << (clean ? "yes" : "NO (known issue)") << '\n';
-		if(!clean && std::getenv("MD_EXPECT_CLEAN_RESAMPLING"))
+		// Like CUE monitoring, the main-mix path reaches RAM-R inverted, which
+		// cannot be heard; compare the waveform with that polarity.
+		for(auto& channel : playback)
+			for(auto& sample : channel) sample = -sample;
+		if(!recordedWaveformMatches(playback, 151, 97))
 			return fail("RAM-R2 main-mix resampling did not preserve the waveform");
 		return 0;
 	}

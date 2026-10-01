@@ -1528,6 +1528,11 @@ namespace md
 				++score.unexpectedShort;);
 	}
 
+	void Hardware::catchUpMixerToProducer()
+	{
+		schedCatchUpDspToDsp(0, 1);
+	}
+
 	void Hardware::schedCatchUpDspToDsp(const uint32_t _consumer, const uint32_t _producer)
 	{
 		// Before a producer DSP enqueues a link frame into the ESSI route,
