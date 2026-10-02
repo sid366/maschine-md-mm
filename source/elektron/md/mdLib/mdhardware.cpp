@@ -1673,21 +1673,43 @@ namespace md
 		// A skipped block also re-zeroes the RATE converter phase and the odd-sample
 		// carry, as the trig did, so recording then starts exactly as the firmware
 		// starts it (same per-block sample counts, same take length).
-		constexpr std::array<dsp56k::TWord, 17> g_storeCaveCode
+		//
+		// Measured against the live hits, three blocks leave a take 8-29 frames
+		// late (about +15 on average for ROM drums). At full RATE (32 samples a
+		// block) the first stored block also drops its first 16 samples, which
+		// centres that on zero.
+		constexpr dsp56k::TWord g_resampleTrimSamples = 16;
+		constexpr dsp56k::TWord g_recorderStoreLoop = 0x103681;	// do b,>$103687 (store loop)
+		constexpr dsp56k::TWord g_jneLong = 0x0af0a2;
+		constexpr dsp56k::TWord g_storeCaveFirst  = g_storeCave + 13;
+		constexpr dsp56k::TWord g_storeCaveNormal = g_storeCave + 34;
+		constexpr std::array<dsp56k::TWord, 38> g_storeCaveCode
 		{
-			0x200014,					// sub b,a                (position)
-			0x200003,					// tst a
-			g_jgeLong, g_storeCave + 13,	// jge: recording
-			0x0140c0, 0x000001,			// add #>1,a              (skipped block)
-			0x022eec,					// move a1,y:(r6+$b)
-			0x240000,					// move #$0,x0
-			0x025ea4,					// move x0,y:(r6+$16)
-			0x025ee4,					// move x0,y:(r6+$17)
-			0x0266a4,					// move x0,y:(r6+$18)
-			g_jmpLong, g_recorderNext,	// jmp: store nothing
-			0x200010,					// add b,a
-			0x022eec,					// move a1,y:(r6+$b)     (displaced)
-			g_jmpLong, g_recorderWrite,	// jmp: store the block   (displaced bra)
+			0x200014,							// sub b,a               (position)
+			0x200003,							// tst a
+			g_jgeLong, g_storeCaveFirst,		// jge: recording
+			0x0140c0, 0x000001,					// add #>1,a             (skipped block)
+			0x022eec,							// move a1,y:(r6+$b)
+			0x240000,							// move #$0,x0
+			0x025ea4,							// move x0,y:(r6+$16)
+			0x025ee4,							// move x0,y:(r6+$17)
+			0x0266a4,							// move x0,y:(r6+$18)
+			g_jmpLong, g_recorderNext,			// jmp: store nothing
+			0x200003,							// tst a                 (first stored block?)
+			g_jneLong, g_storeCaveNormal,
+			0x0140cd, 32,						// cmp #>32,b            (full RATE?)
+			g_jneLong, g_storeCaveNormal,
+			0x56f400, 32 - g_resampleTrimSamples,	// move #>16,a       (position after it)
+			0x022eec,							// move a1,y:(r6+$b)
+			0x64f400, 0xa0 + g_resampleTrimSamples,	// move #>$b0,r4     (skip 16 codes)
+			0x57f000, 0x0000ff,					// move x:>$ff,b         (words)
+			0x0140cc, g_resampleTrimSamples / 2,	// sub #>8,b
+			0x0b7690, 0x00001a,					// move r0,y:(r6+$1a)    (as the firmware)
+			0x026eef,							// move b,y:(r6+$1b)
+			g_jmpLong, g_recorderStoreLoop,		// jmp: store loop
+			0x200010,							// add b,a
+			0x022eec,							// move a1,y:(r6+$b)     (displaced)
+			g_jmpLong, g_recorderWrite,			// jmp: store the block  (displaced bra)
 		};
 	}
 
@@ -1705,7 +1727,11 @@ namespace md
 		// Only the exact OS 1.63 recorder, once DSP2 has loaded it.
 		if(word(g_recorderZeroX0) != 0x240000
 			|| word(g_recorderInit) != 0x022ee4 || word(g_recorderInit + 1) != 0x025ea4
-			|| word(g_recorderStore) != 0x022eec || word(g_recorderStore + 1) != 0x0d10c0)
+			|| word(g_recorderStore) != 0x022eec || word(g_recorderStore + 1) != 0x0d10c0
+			|| word(g_recorderWrite) != 0x34a000 || word(g_recorderWrite + 1) != 0x57f000
+			|| word(g_recorderWrite + 2) != 0x0000ff || word(g_recorderWrite + 3) != 0x0b7690
+			|| word(g_recorderWrite + 4) != 0x00001a || word(g_recorderWrite + 5) != 0x026eef
+			|| word(g_recorderStoreLoop) != 0x06cf00)
 			return;
 		// Never replace an instruction DSP2 is about to execute.
 		const auto pc = dsp.getPC().var;

@@ -283,8 +283,12 @@ rather than folded into this audio fix.
   RATE 64 recording caught that). The patch routines live at P:$01f000, which
   is program-only (unbridged) memory the 56303 lacks, and are applied only
   when the original words match and DSP2 is not at a patched instruction.
-  `mdResampleAlignmentFirmwareTest`: the copy lands +8 frames (0.18 ms) after
-  the live hit, against +104 without the patch. Later hits also carry the
+  Three blocks left ROM drums 8-29 frames late (+15 on average; ROM-01..04:
+  +8, +29, +14, +9). At full RATE the first stored block therefore also drops
+  its first 16 samples (codes from y:$b0, position 16), giving -8, +13, -2 and
+  -7 frames (TRX-BD -9; synth machines with noise or random phase cannot be
+  measured this way). `mdResampleAlignmentFirmwareTest` (ROM-01) requires
+  +/-24 frames: -8 with the patch, +104 without. Later hits also carry the
   sequencer's own step jitter, which differs between the recording run and the
   playback run by up to about +/-1.5 ms. External-input takes start 96 frames
   later too.

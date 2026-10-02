@@ -370,7 +370,7 @@ int main(const int _argc, const char* const* const _argv)
 			std::cout << "resampled copy lands " << lag << " frames (" << lag * 1000.0 / md::g_samplerate
 				<< " ms) after the live hit, at " << 20 * std::log10(std::abs(gain) + 1e-12) << " dB\n";
 			require(gain > 0.1 && gain < 0.5, "RAM-P1 did not play the resampled hit");
-			require(lag >= -48 && lag <= 56, "the resample does not line up with the live track");
+			require(lag >= -24 && lag <= 24, "the resample does not line up with the live track");
 			std::cout << "PASS: main-mix resample lines up with the track it was recorded from\n";
 			return 0;
 		}
