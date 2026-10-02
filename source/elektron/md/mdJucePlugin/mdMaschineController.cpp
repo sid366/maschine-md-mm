@@ -235,6 +235,10 @@ namespace mdJucePlugin::maschine
 			return;
 		const auto combined = _pressed
 			? rowsFor(_model).press(*packet) : rowsFor(_model).release(*packet);
+		// Counted before sending, so the display never sees the page change first.
+		if(_pressed && _model == md::MachineModel::Machinedrum
+			&& _control == md::PanelControl::Scale && !m_shiftHeld)
+			m_mdScalePresses.fetch_add(1, std::memory_order_relaxed);
 		(void)processor.sendPanelEvent(combined.row, combined.mask);
 	}
 
@@ -1394,6 +1398,10 @@ namespace mdJucePlugin::maschine
 			const auto now = std::chrono::steady_clock::now();
 			// RECORD lamps blink on the real units. Retain the mode across the
 			// lamp's dark half, instead of clearing every playback section pulse.
+			// Grid recording: move the bar underline with each SCALE press now;
+			// the page lamps confirm it once the firmware has processed the press.
+			mdDisplay.sections.notePresses(
+				m_mdScalePresses.exchange(0, std::memory_order_relaxed), 30);
 			mdDisplay.update(mdPanel, m_mdPlaying.load(), now,
 				m_mdRealtimeRecordGesture.exchange(false));
 			const bool mdRecordActive = mdDisplay.recording.active;
