@@ -351,6 +351,9 @@ namespace md
 		// OS 1.63: start RAM-R takes later so main-mix resamples line up with the
 		// tracks they were recorded from. Applied between scheduler steps.
 		void     alignMainMixResampling();
+		// OS 1.63: a lone STOP press also ends sample playback (see processUC).
+		void     trackMachinedrumStop(uint8_t _row, uint8_t _mask);
+		void     serviceMachinedrumStop();
 		// Compact, preallocated host-facing storage keeps codec draining bounded.
 		// Overflow retains the newest frames and is explicit telemetry; processAudio
 		// drains the queue every callback so stale audio cannot accumulate between blocks.
@@ -373,6 +376,14 @@ namespace md
 		bool     m_schedInLinkDelivery = false;	// reentrancy guard for cross-DSP catch-up
 		double   m_schedFramesTotal   = 0.0;	// machine-time target, accumulated codec frames
 		uint64_t m_schedUcCyclesDone  = 0;		// UC cycles executed under the scheduler (processUC)
+		// A lone STOP press stops the sequencer and lets sounds ring, so a resample
+		// (one long RAM-P sound) would play out its bar. The firmware's second STOP
+		// silences the voices while delay/reverb tails continue; it is added
+		// automatically, from the panel rows delivered to the firmware.
+		std::array<uint8_t, 7> m_mdPanelRows{};	// rows $20-$26 as last delivered
+		bool m_mdStopAlone = false;
+		uint8_t m_mdAutoStopPhase = 0;
+		uint64_t m_mdAutoStopDue = 0;
 		uint64_t m_mmBpSinceUcCycles[2] = {0,0};// MM backpressure: UC cycle+1 when a DSP's stall began (0 = none)
 		bool     m_mdLinkRoeEngaged = false;	// latched at the first DMA4 receive window
 		bool     m_mdLinkAwaitFresh = false;	// waits for DSP2's first word in a receive window
