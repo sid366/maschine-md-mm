@@ -5,6 +5,7 @@
 #include <cstdint>
 
 #include "mdLib/mdfrontpanel.h"
+#include "mdLib/mdtypes.h"
 
 namespace mdJucePlugin
 {
@@ -56,6 +57,27 @@ namespace mdJucePlugin
 					_nowMilliseconds + g_minimumVisibleMilliseconds;
 			}
 			m_sourceBanks[bank] = _transition.value;
+		}
+
+		// Applies everything drained for one presentation frame. A late frame (a
+		// busy computer) carries a backlog: time each edge by when the firmware
+		// made it, relative to the newest, so a pulse that ended long ago is not
+		// held on screen as if it had just happened.
+		void applyBacklog(const md::FrontPanelLedTransition* const _transitions,
+			const size_t _count, const double _nowMilliseconds)
+		{
+			if(_count == 0)
+				return;
+			const auto newest = _transitions[_count - 1].emulationCycles;
+			for(size_t i = 0; i < _count; ++i)
+			{
+				const auto cycles = _transitions[i].emulationCycles;
+				const auto age = cycles < newest
+					? static_cast<double>(newest - cycles) * 1000.0
+						/ static_cast<double>(md::g_ucClockHz)
+					: 0.0;
+				apply(_transitions[i], _nowMilliseconds - age);
+			}
 		}
 
 		bool advance(const double _nowMilliseconds)
