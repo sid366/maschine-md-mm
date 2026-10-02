@@ -291,16 +291,6 @@ rather than folded into this audio fix.
 
   With RAM-R and RAM-P both on step 1 of every bar, each take includes the
   previous playback, so copies accumulate and clip at the 12-bit limit.
-- **STOP.** One STOP stops the sequencer and lets sounding voices finish, so
-  a resample (one long RAM-P sound) played out the rest of its bar. A second
-  STOP silences every voice (ROM, RAM-P and synth machines alike: a TRX-BD tail
-  40-130 ms later drops 23 dB) while delay and reverb tails continue. The Sample build adds that second press for a lone STOP:
-  `Hardware::trackMachinedrumStop` watches the panel rows delivered to the
-  firmware and `serviceMachinedrumStop` releases and re-presses STOP 25 ms
-  later (or taps it, if the user already let go). Any other key held, such as
-  FUNCTION for PASTE, cancels it. `mdStopEndsResampleFirmwareTest`: after one
-  STOP between the third and fourth resampled hits, the fourth peaks at 2e-5
-  (0.071 without it).
 
 ## Recommended hardware smoke matrix
 

@@ -1006,14 +1006,10 @@ namespace md
 				// space sampled above, so both bytes are guaranteed to fit together.
 				m_uc.queuePanelRx(packet.row);
 				m_uc.queuePanelRx(packet.mask);
-				trackMachinedrumStop(packet.row, packet.mask);
 				synthLib::RealtimeInstrumentation::recordCurrentPanelDelivery(
 					static_cast<uint32_t>(getModel()), packet.row, packet.mask);
 			}
 		}
-
-		if(!projectRestorePending && m_mdAutoStopPhase)
-			serviceMachinedrumStop();
 
 		// Avoid entering MIDI arbitration when every source is idle; a producer
 		// racing this observation is visible at the next instruction boundary.
@@ -1730,86 +1726,6 @@ namespace md
 		write(g_recorderInit + 1, g_initCave);
 		write(g_recorderStore, g_jmpLong);
 		write(g_recorderStore + 1, g_storeCave);
-	}
-
-	namespace
-	{
-		constexpr uint8_t g_mdFirstPanelRow = 0x20;
-		constexpr uint8_t g_mdStopRow = 0x22, g_mdStopMask = 0x08;
-		// Long enough for the firmware's key scan to take each edge.
-		constexpr uint64_t g_mdAutoStopStepCycles = g_ucClockHz / 40;	// 25 ms
-
-		enum AutoStopPhase : uint8_t
-		{
-			AutoStopIdle,
-			AutoStopRelease,	// user still holds STOP: release it ...
-			AutoStopPress,		// ... and press it again (the user's release ends it)
-			AutoStopTapRelease,	// user already let go: release our own tap
-		};
-	}
-
-	void Hardware::trackMachinedrumStop(const uint8_t _row, const uint8_t _mask)
-	{
-		if(m_model != MachineModel::Machinedrum || m_firmwareFingerprint != g_mdOs163Fingerprint
-			|| _row < g_mdFirstPanelRow || _row >= g_mdFirstPanelRow + m_mdPanelRows.size())
-			return;
-		auto& rows = m_mdPanelRows;
-		const bool wasHeld = (rows[g_mdStopRow - g_mdFirstPanelRow] & g_mdStopMask) != 0;
-		rows[_row - g_mdFirstPanelRow] = _mask;
-		const bool held = (rows[g_mdStopRow - g_mdFirstPanelRow] & g_mdStopMask) != 0;
-		bool others = false;
-		for(size_t i = 0; i < rows.size(); ++i)
-			others |= (i == g_mdStopRow - g_mdFirstPanelRow
-				? rows[i] & ~g_mdStopMask : rows[i]) != 0;
-		if(held && !wasHeld)
-		{
-			// FUNCTION + STOP is PASTE: only a lone STOP.
-			m_mdStopAlone = !others;
-			if(m_mdStopAlone && m_mdAutoStopPhase == AutoStopIdle)
-			{
-				m_mdAutoStopPhase = AutoStopRelease;
-				m_mdAutoStopDue = m_schedUcCyclesDone + g_mdAutoStopStepCycles;
-			}
-		}
-		else if(others)
-			m_mdStopAlone = false;
-	}
-
-	void Hardware::serviceMachinedrumStop()
-	{
-		if(m_schedUcCyclesDone < m_mdAutoStopDue || m_uc.availablePanelRxBytes() < 2)
-			return;
-		const auto user = m_mdPanelRows[g_mdStopRow - g_mdFirstPanelRow];
-		const bool userHolds = (user & g_mdStopMask) != 0;
-		const auto send = [&](const uint8_t _mask)
-		{
-			m_uc.queuePanelRx(g_mdStopRow);
-			m_uc.queuePanelRx(_mask);
-		};
-		m_mdAutoStopDue = m_schedUcCyclesDone + g_mdAutoStopStepCycles;
-		if(!m_mdStopAlone && m_mdAutoStopPhase != AutoStopTapRelease)
-		{
-			// Another key joined in: hand the row back as the user holds it.
-			if(m_mdAutoStopPhase == AutoStopPress)
-				send(user);
-			m_mdAutoStopPhase = AutoStopIdle;
-			return;
-		}
-		switch(m_mdAutoStopPhase)
-		{
-		case AutoStopRelease:
-			send(static_cast<uint8_t>(userHolds ? user & ~g_mdStopMask : user | g_mdStopMask));
-			m_mdAutoStopPhase = userHolds ? AutoStopPress : AutoStopTapRelease;
-			break;
-		case AutoStopPress:
-			send(static_cast<uint8_t>(user | g_mdStopMask));
-			m_mdAutoStopPhase = userHolds ? AutoStopIdle : AutoStopTapRelease;
-			break;
-		default:
-			send(user);
-			m_mdAutoStopPhase = AutoStopIdle;
-			break;
-		}
 	}
 
 	namespace
