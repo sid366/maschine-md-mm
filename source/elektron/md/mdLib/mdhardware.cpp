@@ -1625,10 +1625,107 @@ namespace md
 			// OS 1.63's live sequencer position, before it is merged into the
 			// one-colour step lamps. Read-only and guarded by the ROM fingerprint.
 			m_frontPanel.setMachinedrumPlaybackStep(m_uc.read8(0x261aa7));
+			alignMainMixResampling();
 		}
 		// Never make the emulation/audio thread wait for a UI snapshot read. If the
 		// reader owns the short copy lock, the next machine interval republishes.
 		m_frontPanelPublisher->tryPublish(m_frontPanel);
+	}
+
+	namespace
+	{
+		// Machinedrum OS 1.63, DSP2 RAM-R recorder. On a trig it zeroes the take's
+		// write position y:(r6+$b); each 32-sample block it then stores its 12-bit
+		// codes at base + position/2 and advances the position until LEN. The take
+		// length P plays, the end of recording and the move out of the scratch area
+		// all follow that position.
+		//
+		// The main mix reaches the recorder about three blocks after the tracks are
+		// heard (DSP2 voices -> DSP1 mix -> DSP2), so a resample played back on the
+		// trig it was recorded on lands ~2.4 ms late and flams against the live
+		// tracks. The trig now sets the position to -3: the next three blocks only
+		// count up to 0 and store nothing, then recording runs as before. The take
+		// keeps its LEN and starts three blocks (96 frames) later in time, at any
+		// RATE (a block's sample count varies with RATE; its duration does not).
+		constexpr dsp56k::TWord g_resampleSkipBlocks = 3;
+
+		constexpr dsp56k::TWord g_recorderZeroX0 = 0x103543;	// move #$0,x0
+		constexpr dsp56k::TWord g_recorderInit   = 0x103544;	// move x0,y:(r6+$b) / move x0,y:(r6+$16)
+		constexpr dsp56k::TWord g_recorderStore  = 0x103671;	// move a1,y:(r6+$b) / bra $10367b
+		constexpr dsp56k::TWord g_recorderWrite  = 0x10367b;	// store this block's codes
+		constexpr dsp56k::TWord g_recorderNext   = 0x103687;	// after the store loop
+
+		// Below the bridged external range: program-only space the 56303 lacks, which
+		// Dsp fills with RTS and the firmware never uses.
+		constexpr dsp56k::TWord g_initCave  = 0x01f000;
+		constexpr dsp56k::TWord g_storeCave = 0x01f010;
+
+		constexpr dsp56k::TWord g_jsrLong = 0x0bf080, g_jmpLong = 0x0af080, g_jgeLong = 0x0af0a1;
+
+		constexpr std::array<dsp56k::TWord, 5> g_initCaveCode
+		{
+			0x025ea4,										// move x0,y:(r6+$16)    (displaced)
+			0x45f400, (0 - g_resampleSkipBlocks) & 0xffffff,	// move #>-3,x1
+			0x022ee5,										// move x1,y:(r6+$b)
+			0x00000c,										// rts
+		};
+		// Entered with a = position + this block's samples (b), checked against LEN.
+		// A skipped block also re-zeroes the RATE converter phase and the odd-sample
+		// carry, as the trig did, so recording then starts exactly as the firmware
+		// starts it (same per-block sample counts, same take length).
+		constexpr std::array<dsp56k::TWord, 17> g_storeCaveCode
+		{
+			0x200014,					// sub b,a                (position)
+			0x200003,					// tst a
+			g_jgeLong, g_storeCave + 13,	// jge: recording
+			0x0140c0, 0x000001,			// add #>1,a              (skipped block)
+			0x022eec,					// move a1,y:(r6+$b)
+			0x240000,					// move #$0,x0
+			0x025ea4,					// move x0,y:(r6+$16)
+			0x025ee4,					// move x0,y:(r6+$17)
+			0x0266a4,					// move x0,y:(r6+$18)
+			g_jmpLong, g_recorderNext,	// jmp: store nothing
+			0x200010,					// add b,a
+			0x022eec,					// move a1,y:(r6+$b)     (displaced)
+			g_jmpLong, g_recorderWrite,	// jmp: store the block   (displaced bra)
+		};
+	}
+
+	void Hardware::alignMainMixResampling()
+	{
+		auto& dsp = m_dspProducer.dsp();
+		auto& memory = dsp.memory();
+		const auto word = [&](const dsp56k::TWord _address)
+		{
+			return memory.get(dsp56k::MemArea_P, _address);
+		};
+		if(word(g_recorderInit) == g_jsrLong && word(g_recorderInit + 1) == g_initCave
+			&& word(g_recorderStore) == g_jmpLong && word(g_recorderStore + 1) == g_storeCave)
+			return;
+		// Only the exact OS 1.63 recorder, once DSP2 has loaded it.
+		if(word(g_recorderZeroX0) != 0x240000
+			|| word(g_recorderInit) != 0x022ee4 || word(g_recorderInit + 1) != 0x025ea4
+			|| word(g_recorderStore) != 0x022eec || word(g_recorderStore + 1) != 0x0d10c0)
+			return;
+		// Never replace an instruction DSP2 is about to execute.
+		const auto pc = dsp.getPC().var;
+		if((pc >= g_recorderInit && pc <= g_recorderInit + 1)
+			|| (pc >= g_recorderStore && pc <= g_recorderStore + 1))
+			return;
+
+		const auto write = [&](const dsp56k::TWord _address, const dsp56k::TWord _value)
+		{
+			memory.set(dsp56k::MemArea_P, _address, _value);
+			dsp.getJit().notifyProgramMemWrite(_address);
+		};
+		for(size_t i = 0; i < g_initCaveCode.size(); ++i)
+			write(g_initCave + static_cast<dsp56k::TWord>(i), g_initCaveCode[i]);
+		for(size_t i = 0; i < g_storeCaveCode.size(); ++i)
+			write(g_storeCave + static_cast<dsp56k::TWord>(i), g_storeCaveCode[i]);
+		write(g_recorderInit, g_jsrLong);
+		write(g_recorderInit + 1, g_initCave);
+		write(g_recorderStore, g_jmpLong);
+		write(g_recorderStore + 1, g_storeCave);
 	}
 
 	namespace

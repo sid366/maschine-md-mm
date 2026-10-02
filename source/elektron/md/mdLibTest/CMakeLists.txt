@@ -259,8 +259,10 @@ add_test(NAME mdStepEditorFirmwareTest COMMAND mdRecordFirmwareTest md --md-step
 add_test(NAME mmStepEditorFirmwareTest COMMAND mdRecordFirmwareTest mm --mm-step-editors)
 add_test(NAME mdStepUnderlineFirmwareTest COMMAND mdRecordFirmwareTest md --md-step-underline)
 add_test(NAME mdLedBacklogFirmwareTest COMMAND mdRecordFirmwareTest md --md-led-backlog)
+add_test(NAME mdResampleAlignmentFirmwareTest COMMAND mdRecordFirmwareTest md --md-resample-alignment)
 set_tests_properties(mdPadCursorFirmwareTest mdPadCursor64FirmwareTest mdStepEditorFirmwareTest
-	mmStepEditorFirmwareTest mdStepUnderlineFirmwareTest mdLedBacklogFirmwareTest PROPERTIES
+	mmStepEditorFirmwareTest mdStepUnderlineFirmwareTest mdLedBacklogFirmwareTest
+	mdResampleAlignmentFirmwareTest PROPERTIES
 	LABELS "Integration;FirmwareTest;Maschine" SKIP_RETURN_CODE 77 TIMEOUT 120)
 add_test(NAME mdLcdDrumFirmwareTest COMMAND mdRecordFirmwareTest md --drums)
 set_tests_properties(mdLcdDrumFirmwareTest PROPERTIES

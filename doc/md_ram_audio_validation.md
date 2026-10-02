@@ -262,12 +262,35 @@ rather than folded into this audio fix.
   (measured at 125 BPM: 16 -> 4.0, 64 -> 16.1, 100 -> 25.0, 127 -> 31.8
   steps), so one bar is 64 and the longest take, 127, is a quarter step short of
   two bars.
-- **Alignment.** Sequenced on the same step as the drums it records, then
-  played back by RAM-P on that step, the take lands 0.7 ms early (its first
-  0.7 ms is not captured). Panel-triggered takes vary by a few milliseconds
-  with key-scan timing. With RAM-R and RAM-P both on step 1 of every bar, each
-  take includes the previous playback, so copies accumulate and clip at the
-  12-bit limit.
+- **Alignment.** Measure this on a clean pattern: the factory demo pattern
+  has step-1 parameter locks that change RAM-R1's settings. With the demo
+  tracks silenced and a ROM sample on step 1, a take
+  sequenced on the step it records and played back by RAM-P on that step lands
+  104 frames (2.4 ms) after the live hit it doubles; it is otherwise exact (no
+  drift, same hit spacing as the recording run). The main mix reaches the
+  recorder about three 32-frame blocks after the tracks are heard (DSP2 voices
+  -> DSP1 mix -> DSP2). Layered with the original, that is a flam.
+
+  The Sample build corrects it (`Hardware::alignMainMixResampling`). In OS
+  1.63 the DSP2 RAM-R trig code zeroes the take position y:(r6+$b); the
+  per-block code at P:$103660 stores 12-bit codes at base + position/2 until
+  LEN. Two patched instructions start the position at -3 and, while it is
+  negative, count blocks without storing them, re-zeroing the RATE converter
+  phase and odd-sample carry as the trig does. Recording then starts exactly
+  as the firmware starts it, three blocks (96 frames) later, at any RATE.
+  Without the phase reset an odd final sample count left the last code
+  unwritten and RAM-P played it as a click (`mdUwFirmwareTest`'s silent
+  RATE 64 recording caught that). The patch routines live at P:$01f000, which
+  is program-only (unbridged) memory the 56303 lacks, and are applied only
+  when the original words match and DSP2 is not at a patched instruction.
+  `mdResampleAlignmentFirmwareTest`: the copy lands +8 frames (0.18 ms) after
+  the live hit, against +104 without the patch. Later hits also carry the
+  sequencer's own step jitter, which differs between the recording run and the
+  playback run by up to about +/-1.5 ms. External-input takes start 96 frames
+  later too.
+
+  With RAM-R and RAM-P both on step 1 of every bar, each take includes the
+  previous playback, so copies accumulate and clip at the 12-bit limit.
 
 ## Recommended hardware smoke matrix
 

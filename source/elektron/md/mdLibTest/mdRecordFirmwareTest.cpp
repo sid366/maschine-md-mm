@@ -10,12 +10,14 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
 #include <random>
 #include <stdexcept>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace
@@ -238,6 +240,138 @@ int main(const int _argc, const char* const* const _argv)
 			tap(md::PanelControl::Exit);
 			expectEditor(StepEditor::None, "EXIT did not close SLIDE");
 			std::cout << "PASS: arpeggiator/swing/slide editors show their steps on the pads\n";
+			return 0;
+		}
+		if(_argc >= 3 && std::string_view(_argv[2]) == "--md-resample-alignment")
+		{
+			// A main-mix resample played back on the trig it was recorded on must
+			// line up with the live track it doubles. The default pattern's tracks
+			// are silenced; a ROM sample on step 1 is recorded by RAM-R1 and then
+			// layered with RAM-P1.
+			require(model == md::MachineModel::Machinedrum, "resample fixture requires MD");
+			const auto key = [&](md::PanelControl control, bool down, unsigned milliseconds) {
+				const auto packet = md::panelPacket(model, control).value();
+				const auto event = down ? rows.press(packet) : rows.release(packet);
+				require(hardware.trySendPanelEvent(event.row, event.mask), "panel event rejected");
+				advance(hardware, md::g_samplerate * milliseconds / 1000);
+			};
+			const auto tap = [&](md::PanelControl control) { key(control, true, 50); key(control, false, 100); };
+			const auto sysex = [&](std::initializer_list<uint8_t> _body) {
+				synthLib::SMidiEvent e(synthLib::MidiEventSource::Host);
+				e.sysex = {0xf0, 0x00, 0x20, 0x3c, 0x02, 0x00};
+				e.sysex.insert(e.sysex.end(), _body.begin(), _body.end());
+				e.sysex.push_back(0xf7);
+				hardware.sendMidi(e);
+				advance(hardware, md::g_samplerate / 10);
+			};
+			// MD OS 1.63 CC map: tracks 1-4 from CC 16/40/72/96, next four on the next channel.
+			const auto parameter = [&](uint8_t _track, uint8_t _param, uint8_t _value) {
+				constexpr uint8_t base[] = {0x10, 0x28, 0x48, 0x60};
+				hardware.sendMidi({synthLib::MidiEventSource::Host, uint8_t(synthLib::M_CONTROLCHANGE + _track / 4),
+					uint8_t(base[_track % 4] + _param), _value});
+				advance(hardware, 4096);
+			};
+			constexpr uint8_t recorder = 5, player = 6, source = 2;
+			sysex({0x5b, recorder, 32, 1});	// RAM-R1
+			sysex({0x5b, player, 34, 1});	// RAM-P1
+			sysex({0x5b, source, 0, 1});	// ROM-01
+			for(uint8_t t : {uint8_t(0), uint8_t(3), uint8_t(4), uint8_t(8), uint8_t(12), uint8_t(13), uint8_t(14), uint8_t(15)})
+				sysex({0x5b, t, 0, 0});		// GND-EM: silence the demo pattern
+			for(uint8_t t : {recorder, player, source})
+				for(uint8_t p : {uint8_t(19), uint8_t(20), uint8_t(22)})	// DEL, REV, LFO depth
+					parameter(t, p, 0);
+			// MLEV well below clipping, MBAL centre, ILEV/CUE off, one bar, full rate.
+			for(const auto [p, v] : {std::pair<uint8_t, uint8_t>{0, 32}, {1, 64}, {2, 0}, {4, 0}, {5, 0}, {6, 64}, {7, 127}})
+				parameter(recorder, p, v);
+			const auto setTrig = [&](uint8_t _track, bool _on) {
+				for(int attempt = 0; attempt < 4; ++attempt)
+				{
+					sysex({0x71, 0x22, _track});
+					advance(hardware, 8192);
+					if(hardware.getFrontPanelSnapshot().getStepLed(0) == _on)
+						return;
+					tap(md::PanelControl::Trigger1);
+				}
+				require(false, "could not edit a step-1 trig");
+			};
+			const auto run = [&] {
+				const uint32_t frames = 30000;
+				std::vector<float> left(frames), right(frames);
+				synthLib::TAudioOutputs outputs{};
+				outputs[0] = left.data(); outputs[1] = right.data();
+				const auto packet = md::panelPacket(model, md::PanelControl::Play).value();
+				const auto down = rows.press(packet);
+				require(hardware.trySendPanelEvent(down.row, down.mask), "PLAY rejected");
+				for(uint32_t offset = 0; offset < frames; offset += 256)
+				{
+					if(offset == 2048)
+					{
+						const auto up = rows.release(packet);
+						require(hardware.trySendPanelEvent(up.row, up.mask), "PLAY release rejected");
+					}
+					hardware.processAudio(outputs, std::min(256u, frames - offset), 0);
+					outputs[0] += 256; outputs[1] += 256;
+				}
+				tap(md::PanelControl::Stop);
+				advance(hardware, md::g_samplerate / 2);
+				return left;
+			};
+			tap(md::PanelControl::Record);
+			setTrig(recorder, true);
+			setTrig(source, true);
+			tap(md::PanelControl::Record);
+			(void)run();						// RAM-R1 records the step-1 hit
+			tap(md::PanelControl::Record);
+			setTrig(recorder, false);
+			setTrig(player, true);
+			tap(md::PanelControl::Record);
+			const auto layered = run();			// live hit + RAM-P1
+			tap(md::PanelControl::Record);
+			setTrig(player, false);
+			tap(md::PanelControl::Record);
+			const auto live = run();			// live hit alone
+
+			const auto onset = [](const std::vector<float>& _a) {
+				size_t i = 0;
+				while(i < _a.size() && std::abs(_a[i]) < 0.02f) ++i;
+				return i;
+			};
+			const auto correlate = [](const std::vector<float>& _a, size_t _aBegin,
+				const std::vector<float>& _b, size_t _bBegin, size_t _length, int _range, double& _gain) {
+				double best = -1; int bestLag = 0;
+				for(int lag = -_range; lag <= _range; ++lag)
+				{
+					double ab = 0, aa = 0, bb = 0;
+					for(size_t i = 0; i < _length; ++i)
+					{
+						const double x = _a[_aBegin + i], y = _b[size_t(int64_t(_bBegin + i) + lag)];
+						ab += x * y; aa += x * x; bb += y * y;
+					}
+					const double c = std::abs(ab) / std::sqrt(aa * bb + 1e-30);
+					if(c > best) { best = c; bestLag = lag; _gain = ab / (aa + 1e-30); }
+				}
+				return bestLag;
+			};
+			const auto liveHit = onset(live), layeredHit = onset(layered);
+			require(liveHit > 400 && layeredHit > 400 && liveHit + 4000 < live.size(), "no live hit");
+			double gain = 0;
+			// The live hit dominates the layered run: align the runs on it, then the
+			// difference is RAM-P1's copy.
+			const auto runOffset = int64_t(layeredHit) - int64_t(liveHit)
+				+ correlate(live, liveHit - 40, layered, layeredHit - 40, 400, 20, gain);
+			std::vector<float> copy(live.size(), 0.0f);
+			for(size_t i = 0; i < live.size(); ++i)
+			{
+				const auto j = int64_t(i) + runOffset;
+				if(j >= 0 && j < int64_t(layered.size()))
+					copy[i] = layered[size_t(j)] - live[i];
+			}
+			const auto lag = correlate(live, liveHit - 40, copy, liveHit - 40, 2500, 300, gain);
+			std::cout << "resampled copy lands " << lag << " frames (" << lag * 1000.0 / md::g_samplerate
+				<< " ms) after the live hit, at " << 20 * std::log10(std::abs(gain) + 1e-12) << " dB\n";
+			require(gain > 0.1 && gain < 0.5, "RAM-P1 did not play the resampled hit");
+			require(lag >= -48 && lag <= 56, "the resample does not line up with the live track");
+			std::cout << "PASS: main-mix resample lines up with the track it was recorded from\n";
 			return 0;
 		}
 		if(_argc >= 3 && std::string_view(_argv[2]) == "--md-step-underline")

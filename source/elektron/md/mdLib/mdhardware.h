@@ -348,6 +348,9 @@ namespace md
 		double   schedDspFramePos(uint32_t _dspIndex);	// a runnable DSP's machine-frame position
 		void     schedDrainCodecOutput();		// pop the mixer ESSI1 output ring so its TX never blocks
 		void     schedCatchUpDspToDsp(uint32_t _consumer, uint32_t _producer);
+		// OS 1.63: start RAM-R takes later so main-mix resamples line up with the
+		// tracks they were recorded from. Applied between scheduler steps.
+		void     alignMainMixResampling();
 		// Compact, preallocated host-facing storage keeps codec draining bounded.
 		// Overflow retains the newest frames and is explicit telemetry; processAudio
 		// drains the queue every callback so stale audio cannot accumulate between blocks.
