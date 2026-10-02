@@ -5,14 +5,18 @@
 #include "baseLib/filesystem.h"
 #include "../mdJucePlugin/mdMaschineRecordedSteps.h"
 #include "../mdJucePlugin/mdMaschineSectionPlayback.h"
+#include "../mdJucePlugin/mdFrontPanelPresentation.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <random>
 #include <stdexcept>
 #include <string_view>
+#include <vector>
 
 namespace
 {
@@ -291,6 +295,84 @@ int main(const int _argc, const char* const* const _argv)
 			}
 			std::cout << "PASS: bar underline follows every SCALE press (lamps alone missed "
 				<< lampsOnlyLate << " of 12)\n";
+			return 0;
+		}
+		if(_argc >= 3 && std::string_view(_argv[2]) == "--md-led-backlog")
+		{
+			// The editor's step LEDs must show the MD's current state even when the
+			// GUI refreshes rarely (a busy computer) and drains a long backlog.
+			require(model == md::MachineModel::Machinedrum, "LED backlog fixture requires MD");
+			using namespace mdJucePlugin::maschine;
+			const auto key = [&](md::PanelControl control, bool down, unsigned milliseconds) {
+				const auto packet = md::panelPacket(model, control).value();
+				const auto event = down ? rows.press(packet) : rows.release(packet);
+				require(hardware.trySendPanelEvent(event.row, event.mask), "panel event rejected");
+				advance(hardware, md::g_samplerate * milliseconds / 1000);
+			};
+			const auto tap = [&](md::PanelControl control) { key(control, true, 50); key(control, false, 50); };
+			tap(md::PanelControl::Record);
+			key(md::PanelControl::Function, true, 100);
+			tap(md::PanelControl::Scale);
+			key(md::PanelControl::Function, false, 100);
+			for(int attempt = 0; attempt < 6 && occupiedScalePages(hardware.getFrontPanelSnapshot(), model) != 0x0f; ++attempt)
+				tap(md::PanelControl::Scale);
+			tap(md::PanelControl::Enter);
+			for(auto trig : {md::PanelControl::Trigger1, md::PanelControl::Trigger5,
+				md::PanelControl::Trigger9, md::PanelControl::Trigger13})
+				tap(trig);
+			tap(md::PanelControl::Play);
+			advance(hardware, md::g_samplerate / 2);
+			std::array<md::FrontPanelLedTransition, 256> drained;
+			std::vector<md::FrontPanelLedTransition> backlog;
+			const auto drain = [&] {
+				backlog.clear();
+				for(;;)
+				{
+					const auto count = device->drainFrontPanelLedTransitions(drained.data(), drained.size());
+					backlog.insert(backlog.end(), drained.begin(), drained.begin() + count);
+					if(count < drained.size())
+						break;
+				}
+			};
+			const auto stepBits = [](auto&& _raw) {
+				return unsigned(uint8_t(~_raw(0x20))) | unsigned(uint8_t(~_raw(0x21))) << 8;
+			};
+			drain();
+			mdJucePlugin::FrontPanelLedPresentation fixed, frameTimed;
+			fixed.reset(hardware.getFrontPanelSnapshot());
+			frameTimed = fixed;
+			std::mt19937 rng(7);
+			std::uniform_real_distribution<double> jitter(0.6, 1.4);
+			double now = 0, sincePress = 0;
+			unsigned frames = 0, wrong = 0, frameTimedWrong = 0;
+			while(now < 20000)
+			{
+				const double dt = 400 * jitter(rng);
+				advance(hardware, uint32_t(md::g_samplerate * dt / 1000));
+				now += dt;
+				sincePress += dt;
+				if(sincePress > 700)
+				{
+					tap(md::PanelControl::Scale);
+					now += 100;
+					sincePress = 0;
+				}
+				drain();
+				fixed.applyBacklog(backlog.data(), backlog.size(), now);
+				for(const auto& transition : backlog)
+					frameTimed.apply(transition, now);
+				fixed.advance(now);
+				frameTimed.advance(now);
+				const auto truth = hardware.getFrontPanelSnapshot();
+				const auto actual = stepBits([&](uint8_t c) { return truth.getLedBankRaw(c); });
+				++frames;
+				wrong += stepBits([&](uint8_t c) { return fixed.getLedBankRaw(c); }) != actual;
+				frameTimedWrong += stepBits([&](uint8_t c) { return frameTimed.getLedBankRaw(c); }) != actual;
+			}
+			// A pulse in the newest frame's worth of the backlog may still be held.
+			require(wrong <= 1, "step LEDs showed a stale backlog state");
+			std::cout << "PASS: step LEDs match the MD in " << frames - wrong << " of " << frames
+				<< " late frames (timing by frame: " << frames - frameTimedWrong << ")\n";
 			return 0;
 		}
 		if(_argc >= 3 && std::string_view(_argv[2]) == "--clear-track")

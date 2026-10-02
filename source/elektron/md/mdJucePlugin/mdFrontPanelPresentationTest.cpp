@@ -1,6 +1,7 @@
 #include "mdFrontPanelPresentation.h"
 
 #include <cstdlib>
+#include <iterator>
 #include <iostream>
 
 namespace
@@ -94,6 +95,39 @@ namespace
 				"one of the sixteen short TRIG pulses was skipped");
 		}
 	}
+
+	void checkLateFrameBacklog()
+	{
+		md::FrontPanel panel;
+		mdJucePlugin::FrontPanelLedPresentation presentation;
+		presentation.reset(panel);
+		constexpr double now = 5000.0;
+		constexpr uint64_t cyclesPerMs = md::g_ucClockHz / 1000;
+
+		// A frame that arrives 400 ms late (a busy computer). Step 1 blinked at
+		// the start of the backlog, step 2 just now, step 3 lit and stayed lit.
+		const md::FrontPanelLedTransition backlog[] =
+		{
+			{10, 0 * cyclesPerMs, 0x20, 0xfe},
+			{11, 10 * cyclesPerMs, 0x20, 0xff},
+			{12, 200 * cyclesPerMs, 0x20, 0xfb},
+			{13, 390 * cyclesPerMs, 0x20, 0xf9},
+			{14, 395 * cyclesPerMs, 0x20, 0xfb},
+			{15, 400 * cyclesPerMs, 0x22, 0xfe},
+		};
+		presentation.applyBacklog(backlog, std::size(backlog), now);
+		presentation.advance(now);
+		expect(!presentation.isLit(0x20, 0),
+			"a pulse that ended 390 ms ago was shown as current");
+		expect(presentation.isLit(0x20, 1),
+			"a pulse inside the last frame was not shown");
+		expect(presentation.isLit(0x20, 2),
+			"a step lit in the backlog was not shown");
+		presentation.advance(now
+			+ mdJucePlugin::FrontPanelLedPresentation::g_minimumVisibleMilliseconds);
+		expect(!presentation.isLit(0x20, 1) && presentation.isLit(0x20, 2),
+			"late frame did not settle to the firmware state");
+	}
 }
 
 int main()
@@ -102,6 +136,7 @@ int main()
 	checkShortDarkPulse();
 	checkBicolorPulse();
 	checkAllTrigPulses();
+	checkLateFrameBacklog();
 	std::cout << "MD/MM front-panel presentation: PASS\n";
 	return 0;
 }

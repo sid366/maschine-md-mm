@@ -192,16 +192,19 @@ namespace mdJucePlugin
 			constexpr size_t maxBatches =
 				(md::FrontPanelPublisher::g_ledTransitionCapacity
 					+ g_ledTransitionBatchSize - 1) / g_ledTransitionBatchSize;
+			m_ledTransitionBacklog.clear();
 			for(size_t batch = 0; batch < maxBatches; ++batch)
 			{
 				const auto count = publisher->drainLedTransitions(
 					transitions.data(), transitions.size());
 				for(size_t i = 0; i < count; ++i)
 					if(transitions[i].sequence > _afterSequence)
-						m_ledPresentation.apply(transitions[i], _nowMilliseconds);
+						m_ledTransitionBacklog.push_back(transitions[i]);
 				if(count < transitions.size())
 					break;
 			}
+			m_ledPresentation.applyBacklog(m_ledTransitionBacklog.data(),
+				m_ledTransitionBacklog.size(), _nowMilliseconds);
 		};
 
 		auto status = publisher->getLedTransitionStatus();

@@ -183,6 +183,7 @@ namespace mdJucePlugin
 		lcdInteraction::DragGesture m_lcdDragGesture;
 		lcdInteraction::DetentAccumulator m_lcdWheelAccumulator;
 		FrontPanelLedPresentation m_ledPresentation;
+		std::vector<md::FrontPanelLedTransition> m_ledTransitionBacklog;
 		bool m_ledsChanged = true;
 		md::FrontPanelLedTransitionStatus m_ledTransitionStatus;
 		bool m_ledTransitionStatusValid = false;
