@@ -245,6 +245,29 @@ rather than folded into this audio fix.
   word nearby, the last one being ~560-710 reads behind. That per-word
   bookkeeping was not kept. A real fix needs the two DSPs' block clocks modelled
   in lockstep.
+- **Main-mix recording level.** RAM samples are 12-bit, packed two per word by
+  `MERGE`, and the stored code is not linear in amplitude. With `ILEV` at 64 a
+  full-scale external input just reaches the 12-bit limit. With `MLEV` at 64
+  the main mix is recorded about 11 dB hotter than that, so peaks above about
+  0.28 of full scale (-11 dBFS) clip; a single TRX-BD at 0.51 already produces
+  hundreds of full-scale samples. The ESSI0 words reaching DSP2 are unsaturated
+  and match the codec output, and neither DSP uses scaling mode, so the gain is
+  the firmware's own. Measured main-mix to RAM-P gain (TRX-BD, default RAM-P
+  level): `MLEV` 16 -23 dB, 24 -19, 32 -14, 40 -11.5, 48 -8, 56 -5.5,
+  64 -3, 72 -1, 80 +1. `MLEV` 32 keeps a full-scale mix out of clipping. RAM-P
+  track level 127 adds 2.5 dB; its `VOL` adds nothing. `MBAL` crossfades the
+  left and right mix with equal gain at both ends, so a centred sound records at
+  the same level for 0, 64 and 127.
+- **`LEN`.** The recording length is `LEN`/4 steps at the current tempo
+  (measured at 125 BPM: 16 -> 4.0, 64 -> 16.1, 100 -> 25.0, 127 -> 31.8
+  steps), so one bar is 64 and the longest take, 127, is a quarter step short of
+  two bars.
+- **Alignment.** Sequenced on the same step as the drums it records, then
+  played back by RAM-P on that step, the take lands 0.7 ms early (its first
+  0.7 ms is not captured). Panel-triggered takes vary by a few milliseconds
+  with key-scan timing. With RAM-R and RAM-P both on step 1 of every bar, each
+  take includes the previous playback, so copies accumulate and clip at the
+  12-bit limit.
 
 ## Recommended hardware smoke matrix
 
