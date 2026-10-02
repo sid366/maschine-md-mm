@@ -3,6 +3,7 @@
 #include "mdLib/mdfrontpanel.h"
 #include "mdLib/mdtypes.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <utility>
@@ -57,6 +58,31 @@ namespace mdJucePlugin::maschine
 		uint8_t enabled = 0;
 		int selected = 0;
 		uint8_t pulse = 0;
+		// Grid recording: the page the lamps last showed as selected, and SCALE
+		// presses sent since that the lamps have not reflected yet.
+		int confirmed = 0;
+		unsigned unconfirmed = 0;
+		unsigned unconfirmedUpdates = 0;
+
+		// Each SCALE press in grid recording selects the next page. Show it at
+		// once: the selected lamp is only readable while it is the single lit
+		// lamp, which a busy or slow update can miss for several presses. Call
+		// this before update() for presses counted before they were sent.
+		void notePresses(const unsigned _presses, const unsigned _graceUpdates)
+		{
+			if(!_presses)
+				return;
+			unconfirmed = std::min(unconfirmed + _presses, 16u);
+			unconfirmedUpdates = _graceUpdates;
+		}
+
+		int pageAfter(const int _page, const unsigned _presses) const
+		{
+			int page = _page;
+			for(unsigned press = 0; enabled && press < _presses; ++press)
+				do page = (page + 1) % 4; while(!(enabled & (1u << page)));
+			return page;
+		}
 
 		void update(uint8_t lamps, bool recording, bool playing, bool scaleSetup,
 			bool realtimeRecording = false)
@@ -72,9 +98,25 @@ namespace mdJucePlugin::maschine
 				enabled |= lengthMask;
 			if(gridRecording && !scaleSetup && lamps && !(lamps & (lamps - 1)))
 				for(int i = 0; i < 4; ++i)
-					if(lamps == (1u << i)) selected = i;
-			if(enabled && !(enabled & (1u << selected))) selected = 0;
-			const auto baseline = gridRecording ? (1u << selected) : enabled;
+					if(lamps == (1u << i) && i != confirmed)
+					{
+						// The firmware has processed some of the presses (or the
+						// page was changed another way): settle that many.
+						unsigned settled = 1;
+						while(settled <= unconfirmed && pageAfter(confirmed, settled) != i)
+							++settled;
+						unconfirmed = settled <= unconfirmed ? unconfirmed - settled : 0;
+						confirmed = i;
+					}
+			// Presses the lamps never reflect (outside grid entry, say) expire.
+			if(unconfirmedUpdates && --unconfirmedUpdates == 0)
+				unconfirmed = 0;
+			if(!gridRecording || scaleSetup)
+				unconfirmed = 0;
+			if(enabled && !(enabled & (1u << confirmed))) confirmed = 0;
+			selected = pageAfter(confirmed, unconfirmed);
+			// The lamps' playback pulse is relative to the page they show selected.
+			const auto baseline = gridRecording ? (1u << confirmed) : enabled;
 			const auto difference = static_cast<uint8_t>((lamps ^ baseline) & enabled);
 			// The panel's page lamps carry the playback pulse themselves. In
 			// realtime record the transport may have been started from the desktop,
@@ -288,7 +330,7 @@ namespace mdJucePlugin::maschine
 				sections.enabled, recording.realtime, transportRunning, scaleSetup);
 			pulse = flash.update(sections.pulse, sections.enabled, transportRunning,
 				scaleSetup, now, recording.realtime ? playhead.page : -1,
-				recording.active && !recording.realtime, sections.selected);
+				recording.active && !recording.realtime, sections.confirmed);
 		}
 	};
 
@@ -309,7 +351,7 @@ namespace mdJucePlugin::maschine
 			sections.update(occupiedScalePages(panel, md::MachineModel::Machinedrum),
 				recording.active, transportRunning, scaleSetup, recording.realtime);
 			pulse = flash.update(sections.pulse, sections.enabled, transportRunning, scaleSetup, now,
-				-1, recording.active && !recording.realtime, sections.selected);
+				-1, recording.active && !recording.realtime, sections.confirmed);
 		}
 	};
 }

@@ -121,6 +121,9 @@ namespace mdJucePlugin::maschine
 		int m_mmSelectedPatternSlot = -1;
 		uint64_t m_mmLocalPatternSelectionMs = 0;
 		uint8_t m_mmPatternBeforeLocalSelection = 0xff;
+		// SCALE presses sent to the MD (outside FUNCTION) that the bar display
+		// has not applied yet.
+		std::atomic<unsigned> m_mdScalePresses{0};
 		std::atomic<bool> m_mdBankGroupEH{false};
 		std::atomic<bool> m_mmBankGroupEH{false};
 		md::MachineModel m_shiftFunctionTarget = md::MachineModel::Machinedrum;

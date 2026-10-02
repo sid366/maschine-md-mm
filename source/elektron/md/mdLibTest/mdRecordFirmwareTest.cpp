@@ -7,6 +7,7 @@
 #include "../mdJucePlugin/mdMaschineSectionPlayback.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <iostream>
 #include <memory>
@@ -233,6 +234,63 @@ int main(const int _argc, const char* const* const _argv)
 			tap(md::PanelControl::Exit);
 			expectEditor(StepEditor::None, "EXIT did not close SLIDE");
 			std::cout << "PASS: arpeggiator/swing/slide editors show their steps on the pads\n";
+			return 0;
+		}
+		if(_argc >= 3 && std::string_view(_argv[2]) == "--md-step-underline")
+		{
+			// The MK3 bar underline must follow each SCALE (STEP) press in grid
+			// recording even when the display updates rarely, as on a busy computer.
+			require(model == md::MachineModel::Machinedrum, "underline fixture requires MD");
+			using namespace mdJucePlugin::maschine;
+			const auto key = [&](md::PanelControl control, bool down, unsigned milliseconds) {
+				const auto packet = md::panelPacket(model, control).value();
+				const auto event = down ? rows.press(packet) : rows.release(packet);
+				require(hardware.trySendPanelEvent(event.row, event.mask), "panel event rejected");
+				advance(hardware, md::g_samplerate * milliseconds / 1000);
+			};
+			const auto tap = [&](md::PanelControl control) { key(control, true, 50); key(control, false, 50); };
+			tap(md::PanelControl::Record);
+			key(md::PanelControl::Function, true, 100);
+			tap(md::PanelControl::Scale);
+			key(md::PanelControl::Function, false, 100);
+			for(int attempt = 0; attempt < 6 && occupiedScalePages(hardware.getFrontPanelSnapshot(), model) != 0x0f; ++attempt)
+				tap(md::PanelControl::Scale);
+			require(occupiedScalePages(hardware.getFrontPanelSnapshot(), model) == 0x0f, "pattern length setup failed");
+			MachinedrumSectionDisplay display, lampsOnly;
+			const auto base = std::chrono::steady_clock::now();
+			double seconds = 0;
+			bool playing = false;
+			const auto update = [&](const double _dt) {
+				advance(hardware, uint32_t(md::g_samplerate * _dt));
+				seconds += _dt;
+				const auto panel = hardware.getFrontPanelSnapshot();
+				const auto now = base + std::chrono::microseconds(int64_t(seconds * 1e6));
+				display.update(panel, playing, now);
+				lampsOnly.update(panel, playing, now);
+			};
+			update(0.033); // the SCALE setup shows the four pages
+			tap(md::PanelControl::Enter);
+			tap(md::PanelControl::Play);
+			playing = true;
+			for(int i = 0; i < 30; ++i) update(0.033);
+			int expected = display.sections.selected;
+			unsigned lampsOnlyLate = 0;
+			constexpr double gaps[] = {0.12, 0.18, 0.09, 0.25};
+			for(int press = 0; press < 12; ++press)
+			{
+				// As the controller does: counted when sent, applied before the next update.
+				display.sections.notePresses(1, 15);
+				tap(md::PanelControl::Scale);
+				expected = (expected + 1) % 4;
+				for(int i = 0; i < 6; ++i)
+				{
+					update(gaps[(press + i) % 4]);
+					require(display.sections.selected == expected, "bar underline did not follow a SCALE press");
+				}
+				lampsOnlyLate += lampsOnly.sections.selected != expected;
+			}
+			std::cout << "PASS: bar underline follows every SCALE press (lamps alone missed "
+				<< lampsOnlyLate << " of 12)\n";
 			return 0;
 		}
 		if(_argc >= 3 && std::string_view(_argv[2]) == "--clear-track")
