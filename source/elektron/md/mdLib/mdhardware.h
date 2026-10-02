@@ -351,6 +351,7 @@ namespace md
 		// OS 1.63: start RAM-R takes later so main-mix resamples line up with the
 		// tracks they were recorded from. Applied between scheduler steps.
 		void     alignMainMixResampling();
+		uint32_t shapeMachinedrumTrackWord(uint32_t _word);
 		// Compact, preallocated host-facing storage keeps codec draining bounded.
 		// Overflow retains the newest frames and is explicit telemetry; processAudio
 		// drains the queue every callback so stale audio cannot accumulate between blocks.
@@ -376,6 +377,11 @@ namespace md
 		uint64_t m_mmBpSinceUcCycles[2] = {0,0};// MM backpressure: UC cycle+1 when a DSP's stall began (0 = none)
 		bool     m_mdLinkRoeEngaged = false;	// latched at the first DMA4 receive window
 		bool     m_mdLinkAwaitFresh = false;	// waits for DSP2's first word in a receive window
+		// Machinedrum mute gate on the DSP2 -> DSP1 voice link (OS 1.63): each DMA4
+		// window carries 16 tracks x 32 samples. See shapeMachinedrumTrackWord.
+		std::array<float, 16> m_mdTrackGain{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+		uint32_t m_mdLinkWordPos = 0;
+		uint16_t m_mdMuteMask = 0;
 		bool     m_mdOnDemandRendezvousArmPending = false;
 		bool     m_mdOnDemandRendezvousActive = false;
 		bool     m_mdProducerPortCPending = false;

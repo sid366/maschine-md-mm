@@ -296,6 +296,17 @@ rather than folded into this audio fix.
   With RAM-R and RAM-P both on step 1 of every bar, each take includes the
   previous playback, so copies accumulate and clip at the 12-bit limit.
 
+- **Mute (Sample build).** The firmware's track mute (MIDI CC 12-15, mute
+  mode) only stops new trigs, so a sound already playing, such as a one-bar
+  resample, ran on until it ended. OS 1.63 keeps the mutes as a bit mask at
+  $28B34A (track 1 = bit 0). The DSP2 -> DSP1 voice link carries 16 tracks x 32
+  samples per DMA4 window, track n in words 32n..32n+31. The Sample build reads
+  the mask at each window and fades a muted track's words to zero within 2 ms;
+  the voice keeps running, so unmuting continues in time (the main mix that
+  RAM-R records leaves it out too). `mdMuteImmediateFirmwareTest`: muted after
+  the second resampled hit, the third peaks at 2e-5 (0.071 without the gate);
+  unmuted, the fourth plays at full level.
+
 ## Recommended hardware smoke matrix
 
 Before calling the behavior fully hardware-validated, run at least the following

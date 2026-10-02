@@ -231,6 +231,8 @@ namespace md
 								.mdRendezvousRingFullDrops;);
 						else
 						{
+							if(_selfDsp == 1 && !rx.empty())
+								rx[0][0] = shapeMachinedrumTrackWord(rx[0][0]);
 							ring.push_back(std::move(rx));
 							MD_TRANSPORT_RECORD(auto& score = m_transportScorecard.link[_selfDsp];
 								++score.acceptedFrames;
@@ -328,6 +330,8 @@ namespace md
 					}
 					if(!ring.full())
 					{
+						if(_selfDsp == 1 && !isMonomachine() && !rx.empty())
+							rx[0][0] = shapeMachinedrumTrackWord(rx[0][0]);
 						ring.push_back(std::move(rx));
 						MD_TRANSPORT_RECORD(auto& score = m_transportScorecard.link[_selfDsp];
 							++score.acceptedFrames;
@@ -905,6 +909,11 @@ namespace md
 
 	void Hardware::mdLinkWindowFlushed()
 	{
+		// A new DMA4 window starts with track 1's first sample. OS 1.63 keeps the
+		// track mutes (MIDI CC 12-15, mute mode) as a bit mask, track 1 = bit 0.
+		m_mdLinkWordPos = 0;
+		if(m_firmwareFingerprint == g_mdOs163Fingerprint && isAudioReady())
+			m_mdMuteMask = m_uc.read16(0x28b34a);
 		if(!m_mdLinkRoeEngaged)
 			return;
 		++m_mdLinkFlushEpoch;
@@ -1711,6 +1720,27 @@ namespace md
 			0x022eec,							// move a1,y:(r6+$b)     (displaced)
 			g_jmpLong, g_recorderWrite,			// jmp: store the block  (displaced bra)
 		};
+	}
+
+	uint32_t Hardware::shapeMachinedrumTrackWord(const uint32_t _word)
+	{
+		const auto position = m_mdLinkWordPos++;
+		if(position >= 16 * 32 || m_firmwareFingerprint != g_mdOs163Fingerprint)
+			return _word;
+		const auto index = position >> 5;
+		auto& gain = m_mdTrackGain[index];
+		const bool muted = (m_mdMuteMask >> index) & 1u;
+		if(!muted && gain >= 1.0f)
+			return _word;
+
+		// The firmware's mute only stops new trigs, so a sound already playing (a
+		// resample, say) ran on. Fade the track to silence within 2 ms instead; its
+		// voice keeps running, so unmuting continues in time.
+		constexpr float fadeStep = 1.0f / 88.0f;
+		gain = muted ? std::max(0.0f, gain - fadeStep) : std::min(1.0f, gain + fadeStep);
+		const auto value = static_cast<int32_t>(_word << 8) >> 8;
+		const auto out = static_cast<int32_t>(std::lround(static_cast<float>(value) * gain));
+		return static_cast<uint32_t>(out) & 0xffffff;
 	}
 
 	void Hardware::alignMainMixResampling()
