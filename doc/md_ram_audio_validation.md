@@ -235,6 +235,16 @@ rather than folded into this audio fix.
   transmissions already perform. With it every word arrives in order (maximum
   depth 5, no purges), the captured main mix correlates 0.98 with the saw and
   the resampled take 0.97.
+- **Residual resampling wobble.** The resampled take still has inharmonic
+  sidebands around -38 dB (harmonic-to-noise ratio about 21 dB on a saw). DSP2's
+  64-word capture window is opened by its own DMA clock, which only approximates
+  the hardware's, so it sometimes starts a few words before or after DSP1's burst
+  and captures repeated words at the edges. Tagging fresh words
+  (`getLastTxWrittenMask`) and aligning the window to the first fresh word within
+  four improved the ratio only to 22-26 dB: about 30% of windows find no fresh
+  word nearby, the last one being ~560-710 reads behind. That per-word
+  bookkeeping was not kept. A real fix needs the two DSPs' block clocks modelled
+  in lockstep.
 
 ## Recommended hardware smoke matrix
 
