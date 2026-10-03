@@ -54,6 +54,11 @@ Suspects. Please report fork-specific issues here, not to the upstream projects.
   The Maschine plug-ins also have a **Sidechain** input (for hosts such as Live that
   only send audio to instruments that way); it reaches the machines' Input A/B together
   with the main input.
+- **Machinedrum sampling (RAM machines):** RAM-R records the inputs (ILEV) and
+  the machine's own main mix (MLEV), and RAM-P plays the take back. Resamples
+  line up with the tracks they were recorded from, so they can be layered with
+  them, and muting a track silences it at once. See
+  [Resampling on the Machinedrum](#resampling-on-the-machinedrum).
 
 ## Single-machine apps (Maschine MD / Maschine MM)
 
@@ -67,6 +72,53 @@ firmware folders as the combined app, but each keeps its own saved session
 Build them with the `mdSoloJucePlugin_*` and `mmSoloJucePlugin_*` targets
 (`_Standalone`, `_VST3`, `_AU`). One Maschine plug-in instance at a time controls
 the MK3; when it is removed, the next instance takes over.
+
+## Resampling on the Machinedrum
+
+The emulator runs the Machinedrum's own firmware (OS 1.63 UW), so RAM-R and
+RAM-P behave as on the hardware, with these exceptions:
+
+- **Main-mix resampling works.** DSP2 runs slightly ahead of DSP1 in the
+  emulator, which used to lose the main-mix bursts RAM-R records; DSP1 is now
+  caught up before DSP2 reads the link.
+- **Resamples line up with the live tracks.** The main mix reaches the
+  recorder about three 32-sample blocks after the tracks are heard, so a take
+  played back on its own trig landed ~2.4 ms late and flammed against the
+  originals. The emulator starts each take 112 samples later (96 below full
+  RATE); a take now lands within about ±0.3 ms of the hit it doubles. The
+  sequencer's own step timing still varies by up to about ±0.7 ms from bar to
+  bar, as on the hardware.
+- **Mutes are immediate.** The firmware's mute only stops new trigs, so a long
+  sound already playing (a resampled bar, say) ran on. A muted track now fades
+  out within 2 ms; its sound keeps running silently, so unmuting continues in time.
+
+Measurements and the firmware analysis are in
+[doc/md_ram_audio_validation.md](doc/md_ram_audio_validation.md).
+
+Settings that work, for a beat at any tempo:
+
+| RAM-R parameter | Setting | Why |
+| --- | --- | --- |
+| MLEV | about −32 on the MD screen | RAM samples are 12-bit and the main mix is recorded hot: MLEV 0 clips beats peaking above about −11 dBFS. |
+| MBAL | 0 (centre) | It selects left vs right of the mix; the ends record one side only. |
+| ILEV, CUE1, CUE2 | down | Otherwise the inputs are recorded or monitored too. |
+| LEN | steps × 4 | LEN counts quarter steps: one bar (16 steps) is 64. The maximum, 127, is 31¾ steps; for two bars use two recorders (RAM-R1 on step 1 and RAM-R2 on step 17, LEN 64 each, played by RAM-P1/P2). |
+| RATE | 127 | Full quality; the finest alignment applies at full RATE. |
+
+Put the RAM-R trig on step 1 in the pattern rather than playing it by hand,
+let the pattern play once, then remove the trig (or mute the track): a RAM-R
+that keeps recording while RAM-P plays records the playback too, and the copies
+pile up. Then put RAM-P on step 1. As on the hardware, one STOP lets a playing
+take finish its bar; press STOP twice to silence it. To have a take stop or
+pause with the beat, slice it: trigs on several steps with STRT/END parameter
+locks (for four slices: STRT 0/32/64/96, END 32/64/96/127).
+
+### Sample builds
+
+Configure with `-DMDMM_SAMPLE_VARIANT=ON` to build the apps and plug-ins as
+**Maschine MD Sample**, **Maschine MM Sample** and **Maschine MD-MM Sample**,
+with their own plug-in codes and saved sessions, so a test build can be
+installed next to the regular one.
 
 ## Using a Maschine MK3
 
